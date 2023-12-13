@@ -22,10 +22,10 @@ def _round_up( val, mult_of ):
     return val if val % mult_of == 0 else val + mult_of - val % mult_of
 
 
-def _get_aligned_itemsize( formats, alignment ):
+def _get_aligned_itemsize(formats, alignment):
     names = []
-    for i in range( len(formats ) ):
-        names.append( 'x'+str(i) )
+    for i in range(len(formats)):
+        names.append('x'+str(i))
 
     temp_dtype = np.dtype({
         'names'   : names,
@@ -138,7 +138,7 @@ def _create_pipeline_options() -> optix.PipelineCompileOptions:
         traversableGraphFlags = int( optix.TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_GAS ),
         numPayloadValues = 1,
         numAttributeValues = 1,  # TODO: Update
-        exceptionFlags = int(optix.EXCEPTION_FLAG_NONE),
+        exceptionFlags = int(optix.EXCEPTION_FLAG_DEBUG),
         pipelineLaunchParamsVariableName = "params",
         usesPrimitiveTypeFlags = optix.PRIMITIVE_TYPE_FLAGS_TRIANGLE
     )
@@ -222,11 +222,11 @@ def _create_pipeline(ctx: optix.DeviceContext,
             )
 
     pipeline.setStackSize(
-            dc_stack_size_from_trav,
-            dc_stack_size_from_state,
-            cc_stack_size,
-            1   # maxTraversableDepth
-            )
+        dc_stack_size_from_trav,
+        dc_stack_size_from_state,
+        cc_stack_size,
+        1   # maxTraversableDepth
+    )
 
     return pipeline
 
@@ -295,6 +295,58 @@ def _create_sbt(prog_groups: list[optix.ProgramGroup]) \
     )
 
 
+def _launch(pipeline: optix.Pipeline, sbt: optix.ShaderBindingTable,
+            trav_handle: optix.TraversableHandle,
+            num_tris: int,
+            width: int,
+            height: int,
+            light_origin: np.ndarray) -> np.ndarray:
+    logger.info( "Launching ... " )
+
+    h_counts = np.zeros(num_tris + 1, dtype='u4')
+    d_counts = cp.array(h_counts)
+
+    params = [
+        ('u4', 'seed', 0),
+        ('u8', 'counts', d_counts.data.ptr),
+        ('u4', 'width', width),
+        ('f4', 'light_origin_x', light_origin[0]),
+        ('f4', 'light_origin_y', light_origin[1]),
+        ('f4', 'light_origin_z', light_origin[2]),
+
+        ('u8', 'trav_handle',  trav_handle)
+    ]
+
+    formats = [x[0] for x in params]
+    names = [x[1] for x in params]
+    values = [x[2] for x in params]
+    itemsize = _get_aligned_itemsize(formats, 8)
+    params_dtype = np.dtype({
+        'names'   : names,
+        'formats' : formats,
+        'itemsize': itemsize,
+        'align'   : True, 
+    })
+    h_params = np.array([tuple(values)], dtype=params_dtype)
+    d_params = _array_to_device_memory(h_params)
+
+    stream = cp.cuda.Stream()
+    optix.launch(
+        pipeline,
+        stream.ptr,
+        d_params.ptr,
+        h_params.dtype.itemsize,
+        sbt,
+        width,
+        height,
+        1 # depth
+    )
+
+    stream.synchronize()
+
+    return cp.asnumpy(d_counts)
+
+
 def trace(tris: np.ndarray,
           light_origin: np.ndarray,
           tex_vecs: np.ndarray,
@@ -323,3 +375,6 @@ def trace(tris: np.ndarray,
     pipeline = _create_pipeline(ctx, prog_groups, pipeline_options)
     sbt = _create_sbt(prog_groups)
 
+    counts = _launch(pipeline, sbt, gas_handle, len(tris), 100, 100,
+                     light_origin)
+    print(counts)

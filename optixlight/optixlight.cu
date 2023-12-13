@@ -30,7 +30,6 @@ extern "C" __global__ void __raygen__rg()
     sample_sphere(rnd(seed), rnd(seed), ray_direction);
 
     // Trace the ray against our scene hierarchy
-    float3 result = make_float3( 0 );
     unsigned int p0;
     optixTrace(
             params.handle,
