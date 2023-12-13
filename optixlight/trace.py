@@ -1,12 +1,48 @@
 import ctypes
 import logging
+import os
 
 import cupy as cp
 import numpy as np
 import optix
+from pynvrtc.compiler import Program
 
 
 logger = logging.getLogger(__name__)
+
+include_paths = [
+    "/home/matt/NVIDIA-OptiX-SDK-7.3.0-linux64-x86_64/include",
+    "/home/matt/NVIDIA-OptiX-SDK-7.3.0-linux64-x86_64/SDK",
+]
+cuda_tk_path = "/usr/include"
+stddef_path = "/usr/include/linux"
+
+
+def _compile_cuda(cuda_file):
+    with open(cuda_file, 'rb') as f:
+        src = f.read()
+
+    nvrtc_dll = os.environ.get('NVRTC_DLL')
+    if nvrtc_dll is None:
+        nvrtc_dll = ''
+    logger.info("NVRTC_DLL = %s", nvrtc_dll)
+    prog = Program( src.decode(), cuda_file,
+                    lib_name= nvrtc_dll )
+    compile_options = [
+        '-use_fast_math',
+        '-lineinfo',
+        '-default-device',
+        '-std=c++11',
+        '-rdc',
+        'true',
+        f'-I{cuda_tk_path}',
+    ] + [f'-I{include_path}' for include_path in include_paths]
+
+    if (optix.version()[1] == 0):
+        compile_options.append( f'-I{stddef_path}' )
+
+    ptx = prog.compile( compile_options )
+    return ptx
 
 
 def _create_ctx() -> optix.DeviceContext:
@@ -32,8 +68,8 @@ def _array_to_device_memory( numpy_array, stream=cp.cuda.Stream() ):
     return d_mem
 
 
-def _create_accel(ctx: optix, tris: np.ndarray, tex_vecs: np.ndarray) \
-        -> optix.TraversableHandle:
+def _create_accel(ctx: optix.DeviceContext, tris: np.ndarray,
+                  tex_vecs: np.ndarray) -> optix.TraversableHandle:
     d_vertices = _array_to_device_memory(tris)
 
     accel_options = optix.AccelBuildOptions(
@@ -79,6 +115,35 @@ def _create_accel(ctx: optix, tris: np.ndarray, tex_vecs: np.ndarray) \
     return gas_handle
 
 
+def _create_pipeline_options():
+    return optix.PipelineCompileOptions(
+        usesMotionBlur = False,
+        traversableGraphFlags = int( optix.TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_GAS ),
+        numPayloadValues = 1,
+        numAttributeValues = 1,  # TODO: Update
+        exceptionFlags = int(optix.EXCEPTION_FLAG_NONE),
+        pipelineLaunchParamsVariableName = "params",
+        usesPrimitiveTypeFlags = optix.PRIMITIVE_TYPE_FLAGS_TRIANGLE
+    )
+
+
+def _create_module(ctx, pipeline_options, ptx ):
+    logger.info("Creating OptiX module ...")
+    module_options = optix.ModuleCompileOptions(
+        maxRegisterCount = optix.COMPILE_DEFAULT_MAX_REGISTER_COUNT,
+        optLevel         = optix.COMPILE_OPTIMIZATION_DEFAULT,
+        debugLevel       = optix.COMPILE_DEBUG_LEVEL_DEFAULT
+        )
+
+    module, log = ctx.moduleCreateFromPTX(
+        module_options,
+        pipeline_options,
+        ptx
+        )
+    logger.info( "\tModule create log: <<<{}>>>".format( log ) )
+    return module
+
+
 def trace(tris: np.ndarray,
           light_origin: np.ndarray,
           tex_vecs: np.ndarray,
@@ -96,6 +161,10 @@ def trace(tris: np.ndarray,
     Returns:
         The output image.
     """
+    optixlight_cu = os.path.join(os.path.dirname(__file__), 'optixlight.cu')
+    optixlight_ptx = _compile_cuda(optixlight_cu)
 
     ctx = _create_ctx()
     gas_handle = _create_accel(ctx, tris, tex_vecs)
+    pipeline_options = _create_pipeline_options()
+    module = _create_module(ctx, pipeline_options, optixlight_ptx)
