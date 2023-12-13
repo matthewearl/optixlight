@@ -115,7 +115,7 @@ def _create_accel(ctx: optix.DeviceContext, tris: np.ndarray,
     return gas_handle
 
 
-def _create_pipeline_options():
+def _create_pipeline_options() -> optix.PipelineCompileOptions:
     return optix.PipelineCompileOptions(
         usesMotionBlur = False,
         traversableGraphFlags = int( optix.TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_GAS ),
@@ -127,7 +127,9 @@ def _create_pipeline_options():
     )
 
 
-def _create_module(ctx, pipeline_options, ptx ):
+def _create_module(ctx: optix.DeviceContext,
+                   pipeline_options: optix.PipelineCompileOptions,
+                   ptx) -> optix.Module:
     logger.info("Creating OptiX module ...")
     module_options = optix.ModuleCompileOptions(
         maxRegisterCount = optix.COMPILE_DEFAULT_MAX_REGISTER_COUNT,
@@ -140,8 +142,36 @@ def _create_module(ctx, pipeline_options, ptx ):
         pipeline_options,
         ptx
         )
-    logger.info( "\tModule create log: <<<{}>>>".format( log ) )
+    logger.info("\tModule create log: <<<{}>>>".format(log))
     return module
+
+
+def _create_program_groups(ctx: optix.DeviceContext, module: optix.Module):
+    logger.info( "Creating program groups ... " )
+
+    raygen_prog_group_desc = optix.ProgramGroupDesc()
+    raygen_prog_group_desc.raygenModule = module
+    raygen_prog_group_desc.raygenEntryFunctionName = "__raygen__rg"
+    (raygen_prog_group,), log = ctx.programGroupCreate([raygen_prog_group_desc])
+    logger.info("\tProgramGroup raygen create log: <<<{}>>>".format(log))
+
+    miss_prog_group_desc = optix.ProgramGroupDesc()
+    miss_prog_group_desc.missModule = module
+    miss_prog_group_desc.missEntryFunctionName = "__miss__ms"
+    miss_prog_group, log = ctx.programGroupCreate(
+        [ miss_prog_group_desc ]
+        )
+    logger.info("\tProgramGroup miss create log: <<<{}>>>".format(log))
+
+    hitgroup_prog_group_desc = optix.ProgramGroupDesc()
+    hitgroup_prog_group_desc.hitgroupModuleCH = module
+    hitgroup_prog_group_desc.hitgroupEntryFunctionNameCH = "__closesthit__ch"
+    hitgroup_prog_group, log = ctx.programGroupCreate(
+        [ hitgroup_prog_group_desc ]
+        )
+    logger.info("\tProgramGroup hitgroup create log: <<<{}>>>".format(log))
+
+    return [raygen_prog_group, miss_prog_group, hitgroup_prog_group]
 
 
 def trace(tris: np.ndarray,
@@ -168,3 +198,4 @@ def trace(tris: np.ndarray,
     gas_handle = _create_accel(ctx, tris, tex_vecs)
     pipeline_options = _create_pipeline_options()
     module = _create_module(ctx, pipeline_options, optixlight_ptx)
+    prog_groups = _create_program_groups(ctx, module)
