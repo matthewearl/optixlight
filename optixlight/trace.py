@@ -18,6 +18,23 @@ cuda_tk_path = "/usr/include"
 stddef_path = "/usr/include/linux"
 
 
+def _round_up( val, mult_of ):
+    return val if val % mult_of == 0 else val + mult_of - val % mult_of
+
+
+def _get_aligned_itemsize( formats, alignment ):
+    names = []
+    for i in range( len(formats ) ):
+        names.append( 'x'+str(i) )
+
+    temp_dtype = np.dtype({
+        'names'   : names,
+        'formats' : formats,
+        'align'   : True
+    })
+    return _round_up(temp_dtype.itemsize, alignment)
+
+
 def _compile_cuda(cuda_file):
     with open(cuda_file, 'rb') as f:
         src = f.read()
@@ -146,7 +163,8 @@ def _create_module(ctx: optix.DeviceContext,
     return module
 
 
-def _create_program_groups(ctx: optix.DeviceContext, module: optix.Module):
+def _create_program_groups(ctx: optix.DeviceContext, module: optix.Module) \
+        -> list[optix.ProgramGroup]:
     logger.info( "Creating program groups ... " )
 
     raygen_prog_group_desc = optix.ProgramGroupDesc()
@@ -158,20 +176,123 @@ def _create_program_groups(ctx: optix.DeviceContext, module: optix.Module):
     miss_prog_group_desc = optix.ProgramGroupDesc()
     miss_prog_group_desc.missModule = module
     miss_prog_group_desc.missEntryFunctionName = "__miss__ms"
-    miss_prog_group, log = ctx.programGroupCreate(
-        [ miss_prog_group_desc ]
-        )
+    (miss_prog_group,), log = ctx.programGroupCreate([miss_prog_group_desc])
     logger.info("\tProgramGroup miss create log: <<<{}>>>".format(log))
 
     hitgroup_prog_group_desc = optix.ProgramGroupDesc()
     hitgroup_prog_group_desc.hitgroupModuleCH = module
     hitgroup_prog_group_desc.hitgroupEntryFunctionNameCH = "__closesthit__ch"
-    hitgroup_prog_group, log = ctx.programGroupCreate(
-        [ hitgroup_prog_group_desc ]
-        )
+    (hitgroup_prog_group,), log = ctx.programGroupCreate(
+        [hitgroup_prog_group_desc]
+    )
     logger.info("\tProgramGroup hitgroup create log: <<<{}>>>".format(log))
 
     return [raygen_prog_group, miss_prog_group, hitgroup_prog_group]
+
+
+def _create_pipeline(ctx: optix.DeviceContext,
+                     program_groups: list[optix.ProgramGroup],
+                     pipeline_compile_options: optix.PipelineCompileOptions) \
+                         -> optix.Pipeline:
+    logger.info("Creating pipeline ... ")
+
+    max_trace_depth = 1
+    pipeline_link_options = optix.PipelineLinkOptions()
+    pipeline_link_options.maxTraceDepth = max_trace_depth
+    pipeline_link_options.debugLevel = optix.COMPILE_DEBUG_LEVEL_FULL
+
+    log = ""
+    pipeline = ctx.pipelineCreate(
+        pipeline_compile_options,
+        pipeline_link_options,
+        program_groups,
+        log
+    )
+
+    stack_sizes = optix.StackSizes()
+    for prog_group in program_groups:
+        optix.util.accumulateStackSizes(prog_group, stack_sizes)
+
+    (dc_stack_size_from_trav, dc_stack_size_from_state, cc_stack_size) = \
+        optix.util.computeStackSizes(
+            stack_sizes,
+            max_trace_depth,
+            0,  # maxCCDepth
+            0   # maxDCDepth
+            )
+
+    pipeline.setStackSize(
+            dc_stack_size_from_trav,
+            dc_stack_size_from_state,
+            cc_stack_size,
+            1   # maxTraversableDepth
+            )
+
+    return pipeline
+
+
+def _create_sbt(prog_groups: list[optix.ProgramGroup]) \
+        -> optix.ShaderBindingTable:
+    logging.debug("Creating sbt ... ")
+
+    (raygen_prog_group, miss_prog_group, hitgroup_prog_group) = prog_groups
+
+    header_format = '{}B'.format( optix.SBT_RECORD_HEADER_SIZE )
+
+    #
+    # raygen record
+    #
+    formats = [header_format]
+    itemsize = _get_aligned_itemsize(formats, optix.SBT_RECORD_ALIGNMENT)
+    dtype = np.dtype( {
+        'names'     : ['header'],
+        'formats'   : formats,
+        'itemsize'  : itemsize,
+        'align'     : True
+        })
+    h_raygen_sbt = np.array([(0,)], dtype=dtype)
+    optix.sbtRecordPackHeader(raygen_prog_group, h_raygen_sbt)
+    d_raygen_sbt = _array_to_device_memory(h_raygen_sbt)
+
+    #
+    # miss record
+    #
+    formats = [header_format]
+    itemsize = _get_aligned_itemsize(formats, optix.SBT_RECORD_ALIGNMENT)
+    dtype = np.dtype( {
+        'names'     : ['header'],
+        'formats'   : formats,
+        'itemsize'  : itemsize,
+        'align'     : True
+        })
+    h_miss_sbt = np.array([(0,)], dtype=dtype)
+    optix.sbtRecordPackHeader(miss_prog_group, h_miss_sbt)
+    d_miss_sbt = _array_to_device_memory(h_miss_sbt)
+
+    #
+    # hitgroup record
+    #
+    formats = [header_format]
+    itemsize = _get_aligned_itemsize(formats, optix.SBT_RECORD_ALIGNMENT)
+    dtype = np.dtype( {
+        'names'     : ['header'],
+        'formats'   : formats,
+        'itemsize'  : itemsize,
+        'align'     : True
+        } )
+    h_hitgroup_sbt = np.array([(0,)], dtype=dtype)
+    optix.sbtRecordPackHeader(hitgroup_prog_group, h_hitgroup_sbt)
+    d_hitgroup_sbt = _array_to_device_memory( h_hitgroup_sbt )
+
+    return optix.ShaderBindingTable(
+        raygenRecord=d_raygen_sbt.ptr,
+        missRecordBase=d_miss_sbt.ptr,
+        missRecordStrideInBytes=h_miss_sbt.dtype.itemsize,
+        missRecordCount=1,
+        hitgroupRecordBase=d_hitgroup_sbt.ptr,
+        hitgroupRecordStrideInBytes=h_hitgroup_sbt.dtype.itemsize,
+        hitgroupRecordCount=1
+    )
 
 
 def trace(tris: np.ndarray,
@@ -199,3 +320,6 @@ def trace(tris: np.ndarray,
     pipeline_options = _create_pipeline_options()
     module = _create_module(ctx, pipeline_options, optixlight_ptx)
     prog_groups = _create_program_groups(ctx, module)
+    pipeline = _create_pipeline(ctx, prog_groups, pipeline_options)
+    sbt = _create_sbt(prog_groups)
+
