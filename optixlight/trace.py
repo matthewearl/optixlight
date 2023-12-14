@@ -233,6 +233,7 @@ def _create_pipeline(ctx: optix.DeviceContext,
 
 def _create_sbt(prog_groups: list[optix.ProgramGroup]) \
         -> optix.ShaderBindingTable:
+    global d_raygen_sbt, d_miss_sbt, d_hitgroup_sbt
     logging.debug("Creating sbt ... ")
 
     (raygen_prog_group, miss_prog_group, hitgroup_prog_group) = prog_groups
@@ -252,7 +253,6 @@ def _create_sbt(prog_groups: list[optix.ProgramGroup]) \
         })
     h_raygen_sbt = np.array([(0,)], dtype=dtype)
     optix.sbtRecordPackHeader(raygen_prog_group, h_raygen_sbt)
-    global d_raygen_sbt
     d_raygen_sbt = _array_to_device_memory(h_raygen_sbt)
 
     #
@@ -268,7 +268,6 @@ def _create_sbt(prog_groups: list[optix.ProgramGroup]) \
         })
     h_miss_sbt = np.array([(0,)], dtype=dtype)
     optix.sbtRecordPackHeader(miss_prog_group, h_miss_sbt)
-    global d_miss_sbt
     d_miss_sbt = _array_to_device_memory(h_miss_sbt)
 
     #
@@ -284,7 +283,6 @@ def _create_sbt(prog_groups: list[optix.ProgramGroup]) \
         } )
     h_hitgroup_sbt = np.array([(0,)], dtype=dtype)
     optix.sbtRecordPackHeader(hitgroup_prog_group, h_hitgroup_sbt)
-    global d_hitgroup_sbt
     d_hitgroup_sbt = _array_to_device_memory( h_hitgroup_sbt )
 
     return optix.ShaderBindingTable(
