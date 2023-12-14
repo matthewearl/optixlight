@@ -7,6 +7,16 @@ from . import trace
 from . import q2bsp
 
 
+def _parse_tris(bsp: q2bsp.Q2Bsp) -> np.ndarray:
+    # Break faces down into triangle fans.
+    tris = []
+    for f in bsp.faces:
+        vertices = list(f.vertices)
+        v1 = vertices[0]
+        for v2, v3 in zip(vertices[1:-1], vertices[2:]):
+            tris.append([v1, v2, v3])
+    return np.array(tris)
+
 def main():
     logging.basicConfig(level=logging.DEBUG)
 
@@ -15,14 +25,7 @@ def main():
     with open(bsp_fname, 'rb') as f:
         bsp = q2bsp.Q2Bsp(f)
 
-    # Break faces down into triangle fans.
-    tris = []
-    for f in bsp.faces:
-        vertices = list(f.vertices)
-        v1 = vertices[0]
-        for v2, v3 in zip(vertices[1:-1], vertices[2:]):
-            tris.append([v1, v2, v3])
-    tris = np.array(tris)
+    tris = _parse_tris(bsp)
 
     light_origin = np.array(
         next(iter(e['origin']
