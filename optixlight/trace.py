@@ -87,6 +87,7 @@ def _array_to_device_memory( numpy_array, stream=cp.cuda.Stream() ):
 
 def _create_accel(ctx: optix.DeviceContext, tris: np.ndarray,
                   tex_vecs: np.ndarray) -> optix.TraversableHandle:
+    tris = tris.astype(np.float32)
     d_vertices = _array_to_device_memory(tris)
 
     accel_options = optix.AccelBuildOptions(
