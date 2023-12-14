@@ -308,16 +308,13 @@ def _launch(pipeline: optix.Pipeline, sbt: optix.ShaderBindingTable,
     d_counts = cp.array(h_counts)
 
     params = [
-        ('u4', 'seed', 0),
+        ('u8', 'trav_handle', trav_handle),
         ('u8', 'counts', d_counts.data.ptr),
+        ('u4', 'seed', 0),
         ('u4', 'width', width),
-        ('f4', 'light_origin_x', light_origin[0]),
-        ('f4', 'light_origin_y', light_origin[1]),
-        ('f4', 'light_origin_z', light_origin[2]),
-
-        ('f4', 'pad', 0.),
-
-        ('u8', 'trav_handle',  trav_handle)
+        ('f4', 'lx', light_origin[0]),
+        ('f4', 'ly', light_origin[1]),
+        ('f4', 'lz', light_origin[2]),
     ]
 
     formats = [x[0] for x in params]
