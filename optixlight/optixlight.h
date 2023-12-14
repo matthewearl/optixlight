@@ -6,5 +6,7 @@ struct Params
 
     float3       light_origin;
 
+    float pad;
+
     OptixTraversableHandle handle;
 };

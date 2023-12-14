@@ -315,6 +315,8 @@ def _launch(pipeline: optix.Pipeline, sbt: optix.ShaderBindingTable,
         ('f4', 'light_origin_y', light_origin[1]),
         ('f4', 'light_origin_z', light_origin[2]),
 
+        ('f4', 'pad', 0.),
+
         ('u8', 'trav_handle',  trav_handle)
     ]
 

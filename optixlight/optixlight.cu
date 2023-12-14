@@ -44,7 +44,7 @@ extern "C" __global__ void __raygen__rg()
             1,                   // SBT stride   -- See SBT discussion
             0,                   // missSBTIndex -- See SBT discussion
             p0);
-    params.counts[p0] += 1;
+    //params.counts[p0] += 1;
 }
 
 extern "C" __global__ void __miss__ms()
