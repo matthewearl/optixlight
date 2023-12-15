@@ -282,17 +282,17 @@ def _create_sbt(prog_groups: list[optix.ProgramGroup],
     #
     # hitgroup record
     #
-    formats = [header_format]
+    formats = [header_format, 'u4']
     itemsize = _get_aligned_itemsize(formats, optix.SBT_RECORD_ALIGNMENT)
     dtype = np.dtype( {
-        'names'     : ['header'],
+        'names'     : ['header', 'idx'],
         'formats'   : formats,
         'itemsize'  : itemsize,
         'align'     : True
         } )
     h_hitgroup_sbt = np.array([
-        (0,)
-        for M in tex_vecs
+        (0, len(tex_vecs) - 1 - i)
+        for i, M in enumerate(tex_vecs)
     ], dtype=dtype)
     for i in range(len(tex_vecs)):
         optix.sbtRecordPackHeader(hitgroup_prog_group, h_hitgroup_sbt[i])

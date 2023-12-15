@@ -4,6 +4,12 @@
 #include <sutil/vec_math.h>
 
 
+struct HitData
+{
+    unsigned int idx;
+};
+
+
 extern "C" {
 __constant__ Params params;
 }
@@ -55,6 +61,6 @@ extern "C" __global__ void __miss__ms()
 
 extern "C" __global__ void __closesthit__ch()
 {
-    const int prim_idx = optixGetPrimitiveIndex();
-    optixSetPayload_0(1 + prim_idx);
+    HitData* rt_data  = reinterpret_cast<HitData*>( optixGetSbtDataPointer() );
+    optixSetPayload_0(1 + rt_data->idx);
 }
