@@ -4,14 +4,6 @@
 #include <sutil/vec_math.h>
 
 
-struct HitData
-{
-    float4 m0;
-    float4 m1;
-    unsigned int idx;
-};
-
-
 extern "C" {
 __constant__ Params params;
 }
