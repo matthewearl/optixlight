@@ -87,8 +87,13 @@ def _array_to_device_memory( numpy_array, stream=cp.cuda.Stream() ):
 
 def _create_accel(ctx: optix.DeviceContext, tris: np.ndarray,
                   tex_vecs: np.ndarray) -> optix.TraversableHandle:
+    global d_sbt_indices, d_vertices
+
     tris = tris.astype(np.float32)
     d_vertices = _array_to_device_memory(tris)
+    d_sbt_indices = _array_to_device_memory(
+        np.arange(len(tris)).astype(np.uint32)
+    )
 
     accel_options = optix.AccelBuildOptions(
         buildFlags = int( optix.BUILD_FLAG_ALLOW_COMPACTION ),
@@ -100,8 +105,11 @@ def _create_accel(ctx: optix.DeviceContext, tris: np.ndarray,
     triangle_input.vertexStrideInBytes = tris.dtype.itemsize * 3
     triangle_input.numVertices = len(tris) * 3
     triangle_input.vertexBuffers = [d_vertices.ptr]
-    triangle_input.flags = [optix.GEOMETRY_FLAG_DISABLE_ANYHIT]
-    triangle_input.numSbtRecords = 1
+    triangle_input.flags = [optix.GEOMETRY_FLAG_DISABLE_ANYHIT] * len(tris)
+    triangle_input.numSbtRecords = len(tris)
+    triangle_input.sbtIndexOffsetBuffer = d_sbt_indices.ptr
+    triangle_input.sbtIndexOffsetSizeInBytes = 4
+    triangle_input.sbtIndexOffsetStrideInBytes = 4
 
     gas_buffer_sizes = ctx.accelComputeMemoryUsage([accel_options], [triangle_input])
     d_temp_buffer_gas = cp.cuda.alloc(gas_buffer_sizes.tempSizeInBytes)
@@ -232,8 +240,8 @@ def _create_pipeline(ctx: optix.DeviceContext,
     return pipeline
 
 
-def _create_sbt(prog_groups: list[optix.ProgramGroup]) \
-        -> optix.ShaderBindingTable:
+def _create_sbt(prog_groups: list[optix.ProgramGroup],
+                tex_vecs: np.ndarray) -> optix.ShaderBindingTable:
     global d_raygen_sbt, d_miss_sbt, d_hitgroup_sbt
     logging.debug("Creating sbt ... ")
 
@@ -282,8 +290,12 @@ def _create_sbt(prog_groups: list[optix.ProgramGroup]) \
         'itemsize'  : itemsize,
         'align'     : True
         } )
-    h_hitgroup_sbt = np.array([(0,)], dtype=dtype)
-    optix.sbtRecordPackHeader(hitgroup_prog_group, h_hitgroup_sbt)
+    h_hitgroup_sbt = np.array([
+        (0,)
+        for M in tex_vecs
+    ], dtype=dtype)
+    for i in range(len(tex_vecs)):
+        optix.sbtRecordPackHeader(hitgroup_prog_group, h_hitgroup_sbt[i])
     d_hitgroup_sbt = _array_to_device_memory( h_hitgroup_sbt )
 
     return optix.ShaderBindingTable(
@@ -293,7 +305,7 @@ def _create_sbt(prog_groups: list[optix.ProgramGroup]) \
         missRecordCount=1,
         hitgroupRecordBase=d_hitgroup_sbt.ptr,
         hitgroupRecordStrideInBytes=h_hitgroup_sbt.dtype.itemsize,
-        hitgroupRecordCount=1
+        hitgroupRecordCount=len(tex_vecs)
     )
 
 
@@ -370,7 +382,7 @@ def trace(tris: np.ndarray,
     module = _create_module(ctx, pipeline_options, optixlight_ptx)
     prog_groups = _create_program_groups(ctx, module)
     pipeline = _create_pipeline(ctx, prog_groups, pipeline_options)
-    sbt = _create_sbt(prog_groups)
+    sbt = _create_sbt(prog_groups, tex_vecs)
 
     counts = _launch(pipeline, sbt, gas_handle, len(tris), 1_000_000,
                      light_origin)
