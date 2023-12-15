@@ -324,7 +324,7 @@ def _launch(pipeline: optix.Pipeline, sbt: optix.ShaderBindingTable,
     d_counts = cp.array(h_counts)
 
     h_output = np.zeros(output_shape, dtype='u4')
-    d_output = cp.array(h_counts)
+    d_output = cp.array(h_output)
 
     params = [
         ('u8', 'trav_handle', trav_handle),
@@ -363,7 +363,7 @@ def _launch(pipeline: optix.Pipeline, sbt: optix.ShaderBindingTable,
 
     stream.synchronize()
 
-    return cp.asnumpy(d_counts)
+    return cp.asnumpy(d_counts), cp.asnumpy(d_output)
 
 
 def trace(tris: np.ndarray,
@@ -394,6 +394,8 @@ def trace(tris: np.ndarray,
     pipeline = _create_pipeline(ctx, prog_groups, pipeline_options)
     sbt = _create_sbt(prog_groups, tex_vecs)
 
-    counts = _launch(pipeline, sbt, gas_handle, len(tris), 1_000_000,
-                     light_origin, output_shape)
+    counts, output = _launch(pipeline, sbt, gas_handle, len(tris), 1_000_000,
+                             light_origin, output_shape)
     print(repr(counts))
+
+    return output

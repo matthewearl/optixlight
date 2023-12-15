@@ -64,7 +64,7 @@ extern "C" __global__ void __closesthit__ch()
 
     s = max(0, min(params.output_width - 1, s));
     t = max(0, min(params.output_height - 1, t));
-    //atomicAdd(&params.output[s + t * params.output_width], 1);
+    atomicAdd(&params.output[s + t * params.output_width], 1);
 
     optixSetPayload_0(1 + rt_data->idx);
 }
