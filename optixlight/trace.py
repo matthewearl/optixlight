@@ -86,14 +86,15 @@ def _array_to_device_memory( numpy_array, stream=cp.cuda.Stream() ):
 
 
 def _create_accel(ctx: optix.DeviceContext, tris: np.ndarray,
+                  face_idxs: np.ndarray,
                   tex_vecs: np.ndarray) -> optix.TraversableHandle:
     global d_sbt_indices, d_vertices
 
     tris = tris.astype(np.float32)
+    face_idxs = face_idxs.astype(np.uint32)
+
     d_vertices = _array_to_device_memory(tris)
-    d_sbt_indices = _array_to_device_memory(
-        np.arange(len(tris)).astype(np.uint32)
-    )
+    d_sbt_indices = _array_to_device_memory(face_idxs)
 
     accel_options = optix.AccelBuildOptions(
         buildFlags = int( optix.BUILD_FLAG_ALLOW_COMPACTION ),
@@ -108,8 +109,8 @@ def _create_accel(ctx: optix.DeviceContext, tris: np.ndarray,
     triangle_input.flags = [optix.GEOMETRY_FLAG_DISABLE_ANYHIT] * len(tris)
     triangle_input.numSbtRecords = len(tris)
     triangle_input.sbtIndexOffsetBuffer = d_sbt_indices.ptr
-    triangle_input.sbtIndexOffsetSizeInBytes = 4
-    triangle_input.sbtIndexOffsetStrideInBytes = 4
+    triangle_input.sbtIndexOffsetSizeInBytes = face_idxs.dtype.itemsize
+    triangle_input.sbtIndexOffsetStrideInBytes = face_idxs.dtype.itemsize
 
     gas_buffer_sizes = ctx.accelComputeMemoryUsage([accel_options], [triangle_input])
     d_temp_buffer_gas = cp.cuda.alloc(gas_buffer_sizes.tempSizeInBytes)
@@ -368,16 +369,18 @@ def _launch(pipeline: optix.Pipeline, sbt: optix.ShaderBindingTable,
 
 def trace(tris: np.ndarray,
           light_origin: np.ndarray,
+          face_idxs: np.ndarray,
           tex_vecs: np.ndarray,
           output_shape: tuple[int, int]) -> np.ndarray:
     """
     Arguments:
         tris: (n, 3, 3) float array of triangle vertices.
         light_origin (3,) float array with the light origin.
-        tex_vecs: (n, 2, 4) float array of texture coordinates.
-            `v[i, 0] @ (x, y, z, 1)` gives the s texture coordinate in the
-            output image, and `v[i, 1] @ (x, y, z, 1)` gives the t texture
-            coordinate.
+        face_idxs: (n,) int array of face indices, one per tri.
+        tex_vecs: (m, 2, 4) float array of texture coordinates.
+            `v[i, 0] @ (x, y, z, 1)` gives the s texture coordinate of the
+            `i`'th face in the output image, and `v[i, 1] @ (x, y, z, 1)` gives
+            the t texture coordinate.
         output_shape: shape of the output image.
 
     Returns:
@@ -387,7 +390,7 @@ def trace(tris: np.ndarray,
     optixlight_ptx = _compile_cuda(optixlight_cu)
 
     ctx = _create_ctx()
-    gas_handle = _create_accel(ctx, tris, tex_vecs)
+    gas_handle = _create_accel(ctx, tris, face_idxs, tex_vecs)
     pipeline_options = _create_pipeline_options()
     module = _create_module(ctx, pipeline_options, optixlight_ptx)
     prog_groups = _create_program_groups(ctx, module)

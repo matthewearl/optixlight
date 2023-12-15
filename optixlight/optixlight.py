@@ -41,7 +41,7 @@ def _make_atlas(bsp: q2bsp.Q2Bsp) -> boxpack.BoxPacker:
 
 
 def _calculate_tex_vecs(box_packer: boxpack.BoxPacker, bsp: q2bsp.Q2Bsp) \
-        -> np.ndarray:
+        -> tuple[np.ndarray, np.ndarray]:
     face_to_mat = {}
     for face, (r, c) in box_packer:
         tex_coords = np.array(list(face.tex_coords))
@@ -57,11 +57,13 @@ def _calculate_tex_vecs(box_packer: boxpack.BoxPacker, bsp: q2bsp.Q2Bsp) \
 
         face_to_mat[face] = M
 
+    face_idxs = np.repeat(np.arange(len(bsp.faces)),
+                          [face.num_edges - 2 for face in bsp.faces])
+
     return np.stack([
         face_to_mat[face]
         for face in bsp.faces if face.has_lightmap
-        for _ in range(face.num_edges - 2)
-    ], axis=0)
+    ], axis=0), face_idxs
 
 
 def light_bsp(bsp: q2bsp.Q2Bsp) -> tuple[boxpack.BoxPacker, np.ndarray,
@@ -75,11 +77,12 @@ def light_bsp(bsp: q2bsp.Q2Bsp) -> tuple[boxpack.BoxPacker, np.ndarray,
 
     logger.info('calculate tc matrices')
     box_packer = _make_atlas(bsp)
-    tex_vecs = _calculate_tex_vecs(box_packer, bsp)
-    assert len(tex_vecs) == len(tris)
+    tex_vecs, face_idxs = _calculate_tex_vecs(box_packer, bsp)
+    assert len(tex_vecs) == np.max(face_idxs) + 1
 
     logger.info('tracing')
-    output, counts = trace.trace(tris, light_origin, tex_vecs, _ATLAS_SHAPE)
+    output, counts = trace.trace(tris, light_origin, face_idxs, tex_vecs,
+                                 _ATLAS_SHAPE)
 
     return box_packer, output, counts
 
