@@ -64,14 +64,8 @@ def _calculate_tex_vecs(box_packer: boxpack.BoxPacker, bsp: q2bsp.Q2Bsp) \
     ], axis=0)
 
 
-def main():
-    logging.basicConfig(level=logging.DEBUG)
-
-    bsp_fname = sys.argv[1]
-
-    logger.info(f'loading bsp {bsp_fname}')
-    with open(bsp_fname, 'rb') as f:
-        bsp = q2bsp.Q2Bsp(f)
+def light_bsp(bsp: q2bsp.Q2Bsp) -> tuple[boxpack.BoxPacker, np.ndarray,
+        np.ndarray]:
     tris = _parse_tris(bsp)
     light_origin = np.array(
         next(iter(e['origin']
@@ -85,7 +79,21 @@ def main():
     assert len(tex_vecs) == len(tris)
 
     logger.info('tracing')
-    trace.trace(tris, light_origin, tex_vecs, _ATLAS_SHAPE)
+    output, counts = trace.trace(tris, light_origin, tex_vecs, _ATLAS_SHAPE)
+
+    return box_packer, output, counts
+
+
+def main():
+    logging.basicConfig(level=logging.DEBUG)
+
+    bsp_fname = sys.argv[1]
+
+    logger.info(f'loading bsp {bsp_fname}')
+    with open(bsp_fname, 'rb') as f:
+        bsp = q2bsp.Q2Bsp(f)
+    box_packer, output, counts = light_bsp(bsp)
+    print(repr(counts))
 
 
 if __name__ == "__main__":

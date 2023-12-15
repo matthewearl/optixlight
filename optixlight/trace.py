@@ -396,6 +396,5 @@ def trace(tris: np.ndarray,
 
     counts, output = _launch(pipeline, sbt, gas_handle, len(tris), 1_000_000,
                              light_origin, output_shape)
-    print(repr(counts))
 
-    return output
+    return output, counts
