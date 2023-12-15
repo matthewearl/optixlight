@@ -300,8 +300,7 @@ def _create_sbt(prog_groups: list[optix.ProgramGroup]) \
 def _launch(pipeline: optix.Pipeline, sbt: optix.ShaderBindingTable,
             trav_handle: optix.TraversableHandle,
             num_tris: int,
-            width: int,
-            height: int,
+            num_rays: int,
             light_origin: np.ndarray) -> np.ndarray:
     logger.info( "Launching ... " )
 
@@ -312,7 +311,6 @@ def _launch(pipeline: optix.Pipeline, sbt: optix.ShaderBindingTable,
         ('u8', 'trav_handle', trav_handle),
         ('u8', 'counts', d_counts.data.ptr),
         ('u4', 'seed', 0),
-        ('u4', 'width', width),
         ('f4', 'lx', light_origin[0]),
         ('f4', 'ly', light_origin[1]),
         ('f4', 'lz', light_origin[2]),
@@ -326,7 +324,7 @@ def _launch(pipeline: optix.Pipeline, sbt: optix.ShaderBindingTable,
         'names'   : names,
         'formats' : formats,
         'itemsize': itemsize,
-        'align'   : True, 
+        'align'   : True,
     })
     h_params = np.array([tuple(values)], dtype=params_dtype)
     d_params = _array_to_device_memory(h_params)
@@ -338,9 +336,7 @@ def _launch(pipeline: optix.Pipeline, sbt: optix.ShaderBindingTable,
         d_params.ptr,
         h_params.dtype.itemsize,
         sbt,
-        width,
-        height,
-        1 # depth
+        num_rays, 1, 1
     )
 
     stream.synchronize()
@@ -376,6 +372,6 @@ def trace(tris: np.ndarray,
     pipeline = _create_pipeline(ctx, prog_groups, pipeline_options)
     sbt = _create_sbt(prog_groups)
 
-    counts = _launch(pipeline, sbt, gas_handle, len(tris), 100, 100,
+    counts = _launch(pipeline, sbt, gas_handle, len(tris), 1_000_000,
                      light_origin)
-    print(counts)
+    print(repr(counts))

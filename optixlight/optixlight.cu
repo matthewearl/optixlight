@@ -23,7 +23,7 @@ static __forceinline__ __device__ void sample_sphere(const float u1, const float
 extern "C" __global__ void __raygen__rg()
 {
     const uint3 idx = optixGetLaunchIndex();
-    unsigned int seed = tea<4>(idx.y*params.width + idx.x, params.seed);
+    unsigned int seed = tea<4>(idx.x, params.seed);
     const float3 ray_origin = params.light_origin;
     float3 ray_direction;
 
