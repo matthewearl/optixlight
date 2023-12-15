@@ -6,6 +6,8 @@
 
 struct HitData
 {
+    float4 m0;
+    float4 m1;
     unsigned int idx;
 };
 
