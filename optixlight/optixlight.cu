@@ -59,8 +59,12 @@ extern "C" __global__ void __closesthit__ch()
     const float3 ray_dir = optixGetWorldRayDirection();
     const float3 poi = optixGetWorldRayOrigin() + optixGetRayTmax() * ray_dir;
     const float4 poi4 = make_float4(poi.x, poi.y, poi.z, 1);
-    const int s = static_cast<int>(dot(poi4, rt_data->m0));
-    const int t = static_cast<int>(dot(poi4, rt_data->m1));
+    int s = static_cast<int>(dot(poi4, rt_data->m0));
+    int t = static_cast<int>(dot(poi4, rt_data->m1));
+
+    s = max(0, min(params.output_width - 1, s));
+    t = max(0, min(params.output_height - 1, t));
+    //atomicAdd(&params.output[s + t * params.output_width], 1);
 
     optixSetPayload_0(1 + rt_data->idx);
 }

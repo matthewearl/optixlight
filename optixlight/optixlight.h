@@ -4,6 +4,8 @@ struct Params
     unsigned int *counts;
     unsigned int *output;
     unsigned int seed;
+    unsigned int output_width;
+    unsigned int output_height;
     float3 light_origin;
 };
 
