@@ -56,5 +56,11 @@ extern "C" __global__ void __miss__ms()
 extern "C" __global__ void __closesthit__ch()
 {
     HitData* rt_data  = reinterpret_cast<HitData*>( optixGetSbtDataPointer() );
+    const float3 ray_dir = optixGetWorldRayDirection();
+    const float3 poi = optixGetWorldRayOrigin() + optixGetRayTmax() * ray_dir;
+    const float4 poi4 = make_float4(poi.x, poi.y, poi.z, 1);
+    const int s = static_cast<int>(dot(poi4, rt_data->m0));
+    const int t = static_cast<int>(dot(poi4, rt_data->m1));
+
     optixSetPayload_0(1 + rt_data->idx);
 }
