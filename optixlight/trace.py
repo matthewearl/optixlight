@@ -46,6 +46,7 @@ def _compile_cuda(cuda_file):
     prog = Program( src.decode(), cuda_file,
                     lib_name= nvrtc_dll )
     compile_options = [
+        '-G',
         '-use_fast_math',
         '-lineinfo',
         '-default-device',
@@ -284,22 +285,24 @@ def _create_sbt(prog_groups: list[optix.ProgramGroup],
     #
     # hitgroup record
     #
-    formats = [header_format, 'u4', 'u4', 'u4', '4f4', '4f4', 'u4']
+    formats = [header_format, '4f4', '4f4', 'u4', 'u4', 'u4', 'u4']
     itemsize = _get_aligned_itemsize(formats, optix.SBT_RECORD_ALIGNMENT)
     dtype = np.dtype( {
-        'names'     : ['header', 'lm_offset', 'lm_width', 'lm_height',
-                       'm0', 'm1', 'idx'],
+        'names'     : ['header',
+                       'm0', 'm1',
+                       'lm_width', 'lm_height',
+                       'lm_offset',
+                       'idx'],
         'formats'   : formats,
         'itemsize'  : itemsize,
         'align'     : True
         } )
     h_hitgroup_sbt = np.array([
         (0,
+         M[0].astype(np.float32), M[1].astype(np.float32),
          lm_shape[1], lm_shape[0],
          lm_offset,
-         M[0].astype(np.float32),
-         M[1].astype(np.float32),
-         len(tex_vecs) - 1 - i)
+         i)
         for i, (M, lm_shape, lm_offset)
         in enumerate(zip(tex_vecs, lm_shapes, lm_offsets, strict=True))
     ], dtype=dtype)
@@ -406,7 +409,7 @@ def trace(tris: np.ndarray,
     pipeline = _create_pipeline(ctx, prog_groups, pipeline_options)
     sbt = _create_sbt(prog_groups, tex_vecs, lm_shapes, lm_offsets)
 
-    counts, output = _launch(pipeline, sbt, gas_handle, len(tris), 10_000,
+    counts, output = _launch(pipeline, sbt, gas_handle, len(tris), 1_000_000,
                              light_origin, lm_shapes, lm_offsets)
 
     return output, counts

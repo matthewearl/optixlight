@@ -9,10 +9,10 @@ struct Params
 
 struct HitData
 {
+    float4 m0;
+    float4 m1;
     unsigned int lm_width;
     unsigned int lm_height;
     unsigned int lm_offset;
-    float4 m0;
-    float4 m1;
     unsigned int idx;
 };
