@@ -62,9 +62,10 @@ extern "C" __global__ void __closesthit__ch()
     int s = static_cast<int>(dot(poi4, rt_data->m0));
     int t = static_cast<int>(dot(poi4, rt_data->m1));
 
-    s = max(0, min(params.output_width - 1, s));
-    t = max(0, min(params.output_height - 1, t));
-    atomicAdd(&params.output[s + t * params.output_width], 1);
+    s = max(0, min(rt_data->lm_width - 1, s));
+    t = max(0, min(rt_data->lm_height - 1, t));
+    atomicAdd(&params.output[rt_data->lm_offset + s + t * rt_data->lm_width],
+              1);
 
     optixSetPayload_0(1 + rt_data->idx);
 }
