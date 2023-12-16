@@ -1,6 +1,7 @@
 import logging
 import sys
 
+import cv2
 import numpy as np
 
 from . import trace
@@ -72,6 +73,20 @@ def light_bsp(bsp: q2bsp.Q2Bsp) -> tuple[np.ndarray, np.ndarray]:
     return output, counts
 
 
+def _texel_area(face: q2bsp.Face) -> np.ndarray:
+    # Get the area of each texel in the lightmap (as a fraction in [0, 1]) that
+    # is covered by the face.
+    scale = 128
+    h, w = face.lightmap_shape
+    im = cv2.fillPoly(
+        np.zeros((h * scale, w * scale), dtype=np.uint8),
+        [(face.lightmap_tcs * scale).astype(np.int32).reshape(-1,1,2)],
+        (1,)
+    )
+
+    return np.mean(im.reshape(h, scale, w, scale), axis=(1, 3))
+
+
 def _rewrite_bsp(bsp: q2bsp.Q2Bsp, output: np.ndarray, bsp_in_fname: str,
                  bsp_out_fname: str):
     # Pull out each face's lightmap data.
@@ -80,7 +95,13 @@ def _rewrite_bsp(bsp: q2bsp.Q2Bsp, output: np.ndarray, bsp_in_fname: str,
         if face.has_lightmap(0):
             offs = face.lightmap_offset
             h, w = face.lightmap_shape
-            new_lms[face] = output[offs:offs + w*h].reshape(h, w)
+            new_lm = output[offs:offs + w*h].reshape(h, w)
+
+            # Texels that are only partially visible due to being on the edge of
+            # the face should be boosted in brightness.
+            new_lm = new_lm / np.maximum(_texel_area(face), 1e-5)
+
+            new_lms[face] = new_lm
 
     # Adjust levels to be sensible, and set the array to the correct format.
     max_count = np.max([np.max(new_lm) for new_lm in new_lms.values()])
