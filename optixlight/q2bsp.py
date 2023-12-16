@@ -239,6 +239,7 @@ class Q2Bsp:
     def __init__(self, f):
         _read_header(f)
         dir_entries = _read_dir_entries(f)
+        self._dir_entries = dir_entries
 
         def read_face(plane_id, side, edge_list_idx, num_edges, texinfo_id, s1, s2, s3, s4,
                       lightmap_offset):
@@ -266,3 +267,20 @@ class Q2Bsp:
         entities_str = _read(f, entities_dir_entry.size)
         entities_str = entities_str[:entities_str.index(b'\0')].decode('ascii')
         self.entities = ent.parse_entities(entities_str)
+
+
+def rewrite_lightmap(in_f, new_lms: dict[Face, np.ndarray], out_f):
+    _read_header(in_f)
+    lightmap_dir_entry = _read_dir_entries(in_f)[7]
+    in_f.seek(0)
+    bsp_array = np.frombuffer(in_f.read(), dtype=np.uint8).copy()
+
+    for face, lm_array in new_lms.items():
+        assert face.lightmap_shape + (3,) == lm_array.shape
+        assert lm_array.dtype == np.uint8
+        offs = face.lightmap_offset + lightmap_dir_entry.offset
+        h, w = face.lightmap_shape
+        assert face.lightmap_offset + w * h * 3 <= lightmap_dir_entry.size
+        bsp_array[offs:offs + w * h * 3] = lm_array.ravel()
+
+    out_f.write(bsp_array.tobytes())

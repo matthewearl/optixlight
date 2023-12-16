@@ -72,16 +72,48 @@ def light_bsp(bsp: q2bsp.Q2Bsp) -> tuple[np.ndarray, np.ndarray]:
     return output, counts
 
 
+def _rewrite_bsp(bsp: q2bsp.Q2Bsp, output: np.ndarray, bsp_in_fname: str,
+                 bsp_out_fname: str):
+    # Pull out each face's lightmap data.
+    new_lms = {}
+    for face in bsp.faces:
+        if face.has_lightmap(0):
+            offs = face.lightmap_offset
+            h, w = face.lightmap_shape
+            new_lms[face] = output[offs:offs + w*h].reshape(h, w)
+
+    # Adjust levels to be sensible, and set the array to the correct format.
+    max_count = np.max([np.max(new_lm) for new_lm in new_lms.values()])
+    new_lms = {face: (256 * (new_lm / max_count) ** 0.5).astype(np.uint8)
+               for face, new_lm in new_lms.items()}
+    new_lms = {face: np.stack([new_lm] * 3, axis=2)
+               for face, new_lm in new_lms.items()}
+
+    # Rewrite the lightmap lump.
+    with (open(bsp_in_fname, 'rb') as in_f, open(bsp_out_fname, 'wb') as out_f):
+        q2bsp.rewrite_lightmap(in_f, new_lms, out_f)
+
+
 def main():
     logging.basicConfig(level=logging.DEBUG)
 
-    bsp_fname = sys.argv[1]
+    bsp_in_fname = sys.argv[1]
+    if len(sys.argv) > 2:
+        bsp_out_fname = sys.argv[2]
+    else:
+        bsp_out_fname = None
 
-    logger.info(f'loading bsp {bsp_fname}')
-    with open(bsp_fname, 'rb') as f:
+    logger.info(f'loading bsp {bsp_in_fname}')
+    with open(bsp_in_fname, 'rb') as f:
         bsp = q2bsp.Q2Bsp(f)
+
+    logger.info('tracing')
     output, counts = light_bsp(bsp)
     print(repr(counts))
+
+    if bsp_out_fname is not None:
+        logger.info(f'writing bsp {bsp_out_fname}')
+        _rewrite_bsp(bsp, output, bsp_in_fname, bsp_out_fname)
 
 
 if __name__ == "__main__":

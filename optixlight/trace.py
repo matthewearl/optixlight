@@ -409,7 +409,7 @@ def trace(tris: np.ndarray,
     pipeline = _create_pipeline(ctx, prog_groups, pipeline_options)
     sbt = _create_sbt(prog_groups, tex_vecs, lm_shapes, lm_offsets)
 
-    counts, output = _launch(pipeline, sbt, gas_handle, len(tris), 1_000_000,
+    counts, output = _launch(pipeline, sbt, gas_handle, len(tris), 100_000_000,
                              light_origin, lm_shapes, lm_offsets)
 
     return output, counts
