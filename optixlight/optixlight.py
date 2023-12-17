@@ -40,9 +40,10 @@ def _calculate_tex_vecs(bsp: q2bsp.Q2Bsp) -> tuple[np.ndarray, np.ndarray]:
 
             tex_vecs.append(M)
 
-    face_idxs = np.repeat(np.arange(len(bsp.faces)),
-                          [(face.num_edges - 2) if face.has_lightmap(0) else 0
-                           for face in bsp.faces])
+    face_idxs = np.repeat(np.arange(len(tex_vecs)),
+                          [(face.num_edges - 2)
+                           for face in bsp.faces
+                           if face.has_lightmap(0)])
 
     return np.stack(tex_vecs, axis=0), face_idxs
 
