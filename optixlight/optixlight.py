@@ -1,9 +1,9 @@
 import logging
 import sys
 
-import cv2
 import numpy as np
 
+from . import raster
 from . import trace
 from . import q2bsp
 
@@ -74,17 +74,7 @@ def light_bsp(bsp: q2bsp.Q2Bsp) -> tuple[np.ndarray, np.ndarray]:
 
 
 def _texel_area(face: q2bsp.Face) -> np.ndarray:
-    # Get the area of each texel in the lightmap (as a fraction in [0, 1]) that
-    # is covered by the face.
-    scale = 128
-    h, w = face.lightmap_shape
-    im = cv2.fillPoly(
-        np.zeros((h * scale, w * scale), dtype=np.uint8),
-        [(face.lightmap_tcs * scale).astype(np.int32).reshape(-1,1,2)],
-        (1,)
-    )
-
-    return np.mean(im.reshape(h, scale, w, scale), axis=(1, 3))
+    return raster.render_aa_poly(face.lightmap_tcs, face.lightmap_shape)
 
 
 def _rewrite_bsp(bsp: q2bsp.Q2Bsp, output: np.ndarray, bsp_in_fname: str,
