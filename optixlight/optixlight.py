@@ -1,4 +1,6 @@
 import logging
+import functools
+import pathlib
 import sys
 
 import numpy as np
@@ -6,6 +8,7 @@ import numpy as np
 from . import raster
 from . import trace
 from . import q2bsp
+from . import wal
 
 
 logger = logging.getLogger(__name__)
@@ -66,7 +69,8 @@ def light_bsp(bsp: q2bsp.Q2Bsp, faces: list[q2bsp.Face]) -> tuple[np.ndarray, np
     return output, counts
 
 
-def _texel_area(face: q2bsp.Face) -> np.ndarray:
+@functools.lru_cache(None)
+def _luxel_area(face: q2bsp.Face) -> np.ndarray:
     return raster.render_aa_poly(face.lightmap_tcs, face.lightmap_shape)
 
 
@@ -81,7 +85,7 @@ def _rewrite_bsp(faces: list[q2bsp.Face], output: np.ndarray, bsp_in_fname: str,
 
         # Texels that are only partially visible due to being on the edge of
         # the face should be boosted in brightness.
-        new_lm = new_lm / np.maximum(_texel_area(face), 1e-5)
+        new_lm = new_lm / np.maximum(_luxel_area(face), 1e-5)
 
         new_lms[face] = new_lm
 
@@ -97,12 +101,78 @@ def _rewrite_bsp(faces: list[q2bsp.Face], output: np.ndarray, bsp_in_fname: str,
         q2bsp.rewrite_lightmap(in_f, new_lms, out_f)
 
 
+def _read_pcx_palette(file):
+    file.seek(-769, 2)
+    if file.read(1) != b'\x0c':
+        raise ValueError("Palette not found in PCX file")
+
+    palette_data = file.read(768)
+    palette = np.frombuffer(palette_data, dtype=np.uint8).reshape(-1, 3)
+    return palette
+
+
+def _make_source_ims(game_dir: pathlib.Path, faces: list[q2bsp.Face]) \
+        -> dict[q2bsp.Face, np.ndarray]:
+    # Load the palette.
+    with (game_dir / 'pics' / 'colormap.pcx').open('rb') as f:
+        pal = _read_pcx_palette(f)
+
+    # Load all texture images.
+    logger.info('loading textures')
+    textures: dict[str, np.ndarray] = {}
+    for face in faces:
+        tex_name = face.tex_info.texture
+        if tex_name not in textures:
+            # Only .wal supported at the moment.
+            with (game_dir / 'textures' / f'{tex_name}.wal').open('rb') as f:
+                textures[tex_name] = wal.read_wal(f).images[0]
+
+    # Initialize source ims as the lightmap.
+    logger.info('extracting lightmaps as initial source')
+    source_ims: dict[q2bsp.Face, np.ndarray] = {}
+    for face in faces:
+        source_ims[face] = face.extract_lightmap(0) / 255.
+
+    # Make luxels that do not appear on the face black.
+    logger.info('scaling sources by face intersection')
+    for face in faces:
+        source_ims[face] *= _luxel_area(face)[:, :, None]
+
+    # Scale by texture color.
+    logger.info('scaling sources by texture color')
+    for face in faces:
+        # Create an image where each pixel corresponds with the reflectivity of
+        # the corresponding luxel.
+        mins = np.floor(
+            np.min(np.array(list(face.tex_coords)), axis=0).astype(np.float32)
+                / 16
+        ).astype(np.int32)
+        tex_im = textures[face.tex_info.texture]
+        lm_shape = face.lightmap_shape
+        s = (np.arange(lm_shape[1] * 16) - 8 + mins[0] * 16) % tex_im.shape[1]
+        t = (np.arange(lm_shape[0] * 16) - 8 + mins[1] * 16) % tex_im.shape[0]
+        tex_im_remapped_16x = tex_im[t[:, None], s[None, :]]
+
+        tex_im_remapped = np.mean(
+            pal[tex_im_remapped_16x].reshape(
+                (lm_shape[0], 16, lm_shape[1], 16, 3)
+            ) / 255.,
+            axis=(1, 3)
+        )
+
+        # Scale the source map by this reflectivity.
+        source_ims[face] *= tex_im_remapped
+
+    return source_ims
+
+
 def main():
     logging.basicConfig(level=logging.DEBUG)
 
-    bsp_in_fname = sys.argv[1]
-    if len(sys.argv) > 2:
-        bsp_out_fname = sys.argv[2]
+    game_dir = pathlib.Path(sys.argv[1])
+    bsp_in_fname = sys.argv[2]
+    if len(sys.argv) > 3:
+        bsp_out_fname = sys.argv[3]
     else:
         bsp_out_fname = None
 
@@ -111,6 +181,9 @@ def main():
         bsp = q2bsp.Q2Bsp(f)
 
     faces = [face for face in bsp.faces if face.has_lightmap(0)]
+
+    logger.info('making source images')
+    source_ims = _make_source_ims(game_dir, faces)
 
     logger.info('tracing')
     output, counts = light_bsp(bsp, faces)

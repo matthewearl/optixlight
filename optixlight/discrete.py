@@ -38,20 +38,23 @@ def random_sample(cdf):
     return _binary_search(cdf, v) + 1
 
 
-def build_source_cdf(bsp: q2bsp.Q2Bsp):
+def build_source_cdf(faces: list[q2bsp.Face],
+                     source_ims: dict[q2bsp.Face, np.ndarray]):
+    if set(faces) != set(source_ims.keys()):
+        raise ValueError("There must be an image for every face")
+
     logger.info('making entries')
     num_entries = np.sum([
-        np.sum(np.any(face.extract_lightmap(0) > 0, axis=2))
-        for face in bsp.faces
-        if face.has_lightmap(0)
+        np.sum(np.any(source_ims[face] > 0, axis=2))
+        for face in faces
     ])
     entries = np.empty(num_entries, dtype=_entry_dtype)
     i = 0
-    for face_idx, face in enumerate(f for f in bsp.faces if f.has_lightmap(0)):
-        face_lm = face.extract_lightmap(0)
-        for t in range(face_lm.shape[0]):
-            for s in range(face_lm.shape[1]):
-                color = face_lm[t, s]
+    for face_idx, face in enumerate(faces):
+        source_im = face.extract_lightmap(0)
+        for t in range(source_im.shape[0]):
+            for s in range(source_im.shape[1]):
+                color = source_im[t, s]
                 if np.any(color > 0):
                     assert i < num_entries
                     entries[i]['face_idx'] = face_idx
