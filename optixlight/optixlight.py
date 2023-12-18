@@ -74,8 +74,8 @@ def _luxel_area(face: q2bsp.Face) -> np.ndarray:
     return raster.render_aa_poly(face.lightmap_tcs, face.lightmap_shape)
 
 
-def _rewrite_bsp(faces: list[q2bsp.Face], output: np.ndarray, bsp_in_fname: str,
-                 bsp_out_fname: str):
+def _create_new_lms(faces: list[q2bsp.Face], output: np.ndarray) \
+        -> dict[q2bsp.Face, np.ndarray]:
     # Pull out each face's lightmap data.
     new_lms = {}
     for face in faces:
@@ -96,9 +96,7 @@ def _rewrite_bsp(faces: list[q2bsp.Face], output: np.ndarray, bsp_in_fname: str,
     new_lms = {face: np.stack([new_lm] * 3, axis=2)
                for face, new_lm in new_lms.items()}
 
-    # Rewrite the lightmap lump.
-    with (open(bsp_in_fname, 'rb') as in_f, open(bsp_out_fname, 'wb') as out_f):
-        q2bsp.rewrite_lightmap(in_f, new_lms, out_f)
+    return new_lms
 
 
 def _read_pcx_palette(file):
@@ -191,8 +189,11 @@ def main():
 
     if bsp_out_fname is not None:
         logger.info(f'writing bsp {bsp_out_fname}')
-        _rewrite_bsp(faces, output, bsp_in_fname, bsp_out_fname)
+        new_lms = _create_new_lms(faces, output)
 
+        # Rewrite the lightmap lump.
+        with (open(bsp_in_fname, 'rb') as in_f, open(bsp_out_fname, 'wb') as out_f):
+            q2bsp.rewrite_lightmap(in_f, new_lms, out_f)
 
 if __name__ == "__main__":
     main()
