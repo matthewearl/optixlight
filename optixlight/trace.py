@@ -242,9 +242,7 @@ def _create_pipeline(ctx: optix.DeviceContext,
 
 
 def _create_sbt(prog_groups: list[optix.ProgramGroup],
-                tex_vecs: np.ndarray,
-                lm_shapes: np.ndarray,
-                lm_offsets: np.ndarray) -> optix.ShaderBindingTable:
+                num_faces: int) -> optix.ShaderBindingTable:
     global d_raygen_sbt, d_miss_sbt, d_hitgroup_sbt
     logging.debug("Creating sbt ... ")
 
@@ -285,28 +283,16 @@ def _create_sbt(prog_groups: list[optix.ProgramGroup],
     #
     # hitgroup record
     #
-    formats = [header_format, '4f4', '4f4', 'u4', 'u4', 'u4', 'u4']
+    formats = [header_format, 'u4']
     itemsize = _get_aligned_itemsize(formats, optix.SBT_RECORD_ALIGNMENT)
-    dtype = np.dtype( {
-        'names'     : ['header',
-                       'm0', 'm1',
-                       'lm_width', 'lm_height',
-                       'lm_offset',
-                       'idx'],
+    dtype = np.dtype({
+        'names'     : ['header', 'face_idx'],
         'formats'   : formats,
         'itemsize'  : itemsize,
         'align'     : True
-        } )
-    h_hitgroup_sbt = np.array([
-        (0,
-         M[0].astype(np.float32), M[1].astype(np.float32),
-         lm_shape[1], lm_shape[0],
-         lm_offset,
-         i)
-        for i, (M, lm_shape, lm_offset)
-        in enumerate(zip(tex_vecs, lm_shapes, lm_offsets, strict=True))
-    ], dtype=dtype)
-    for i in range(len(tex_vecs)):
+    })
+    h_hitgroup_sbt = np.array([(0, i) for i in range(num_faces)], dtype=dtype)
+    for i in range(num_faces):
         optix.sbtRecordPackHeader(hitgroup_prog_group, h_hitgroup_sbt[i])
     d_hitgroup_sbt = _array_to_device_memory( h_hitgroup_sbt )
 
@@ -317,15 +303,15 @@ def _create_sbt(prog_groups: list[optix.ProgramGroup],
         missRecordCount=1,
         hitgroupRecordBase=d_hitgroup_sbt.ptr,
         hitgroupRecordStrideInBytes=h_hitgroup_sbt.dtype.itemsize,
-        hitgroupRecordCount=len(tex_vecs)
+        hitgroupRecordCount=num_faces
     )
 
 
 def _launch(pipeline: optix.Pipeline, sbt: optix.ShaderBindingTable,
             trav_handle: optix.TraversableHandle,
-            num_tris: int,
             num_rays: int,
             light_origin: np.ndarray,
+            tex_vecs: np.ndarray,
             lm_shapes: np.ndarray,
             lm_offsets: np.ndarray) -> np.ndarray:
     logger.info( "Launching ... " )
@@ -339,10 +325,32 @@ def _launch(pipeline: optix.Pipeline, sbt: optix.ShaderBindingTable,
     h_output = np.zeros(output_shape, dtype='u4')
     d_output = cp.array(h_output)
 
+    # Make face info.  Structs seem to have a size that is a multiple of
+    # SBT_RECORD_ALIGNMENT, but I don't know how robust this is...
+    formats = ['4f4', '4f4', 'u4', 'u4', 'u4']
+    itemsize = _get_aligned_itemsize(formats, optix.SBT_RECORD_ALIGNMENT)
+    dtype = np.dtype({
+        'names'     : ['m0', 'm1',
+                       'lm_width', 'lm_height',
+                       'lm_offset'],
+        'formats'   : formats,
+        'itemsize'  : itemsize,
+        'align'     : True
+    })
+    h_face_info = np.array([
+        (M[0].astype(np.float32), M[1].astype(np.float32),
+         lm_shape[1], lm_shape[0],
+         lm_offset)
+        for M, lm_shape, lm_offset
+        in zip(tex_vecs, lm_shapes, lm_offsets, strict=True)
+    ], dtype=dtype)
+    d_face_info = _array_to_device_memory(h_face_info)
+
     params = [
         ('u8', 'trav_handle', trav_handle),
         ('u8', 'counts', d_counts.data.ptr),
         ('u8', 'output', d_output.data.ptr),
+        ('u8', 'faces', d_face_info.ptr),
         ('u4', 'seed', 0),
         ('f4', 'lx', light_origin[0]),
         ('f4', 'ly', light_origin[1]),
@@ -407,9 +415,9 @@ def trace(tris: np.ndarray,
     module = _create_module(ctx, pipeline_options, optixlight_ptx)
     prog_groups = _create_program_groups(ctx, module)
     pipeline = _create_pipeline(ctx, prog_groups, pipeline_options)
-    sbt = _create_sbt(prog_groups, tex_vecs, lm_shapes, lm_offsets)
+    sbt = _create_sbt(prog_groups, len(tex_vecs))
 
-    counts, output = _launch(pipeline, sbt, gas_handle, len(tris), 100_000_000,
-                             light_origin, lm_shapes, lm_offsets)
+    counts, output = _launch(pipeline, sbt, gas_handle, 100_000_000,
+                             light_origin, tex_vecs, lm_shapes, lm_offsets)
 
     return output, counts
