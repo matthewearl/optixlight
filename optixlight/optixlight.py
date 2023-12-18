@@ -91,7 +91,7 @@ def _rewrite_bsp(faces: list[q2bsp.Face], output: np.ndarray, bsp_in_fname: str,
 
     # Adjust levels to be sensible, and set the array to the correct format.
     max_count = np.max([np.max(new_lm) for new_lm in new_lms.values()])
-    new_lms = {face: (256 * (new_lm / max_count) ** 0.5).astype(np.uint8)
+    new_lms = {face: (255 * (new_lm / max_count) ** 0.5).astype(np.uint8)
                for face, new_lm in new_lms.items()}
     new_lms = {face: np.stack([new_lm] * 3, axis=2)
                for face, new_lm in new_lms.items()}
