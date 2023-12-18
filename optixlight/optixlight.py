@@ -5,6 +5,7 @@ import sys
 
 import numpy as np
 
+from . import discrete
 from . import raster
 from . import trace
 from . import q2bsp
@@ -48,7 +49,8 @@ def _calculate_tex_vecs(faces: list[q2bsp.Face]) \
     return np.stack(tex_vecs, axis=0), face_idxs
 
 
-def light_bsp(bsp: q2bsp.Q2Bsp, faces: list[q2bsp.Face]) -> tuple[np.ndarray, np.ndarray]:
+def light_bsp(bsp: q2bsp.Q2Bsp, game_dir: pathlib.Path,
+              faces: list[q2bsp.Face]) -> tuple[np.ndarray, np.ndarray]:
     tris = _parse_tris(faces)
     light_origin = np.array(
         next(iter(e['origin']
@@ -60,11 +62,17 @@ def light_bsp(bsp: q2bsp.Q2Bsp, faces: list[q2bsp.Face]) -> tuple[np.ndarray, np
     tex_vecs, face_idxs = _calculate_tex_vecs(faces)
     assert len(tex_vecs) == np.max(face_idxs) + 1
 
+    logger.info('making source images')
+    source_ims = _make_source_ims(game_dir, faces)
+
+    logger.info('making source cdf')
+    source_entries, source_cdf, _ = discrete.build_source_cdf(faces, source_ims)
+
     logger.info('tracing')
     lm_shapes = np.stack([face.lightmap_shape for face in faces], axis=0)
     lm_offsets = np.array([face.lightmap_offset for face in faces])
-    output, counts = trace.trace(tris, light_origin, face_idxs, tex_vecs,
-                                 lm_shapes, lm_offsets)
+    output, counts = trace.trace(tris, light_origin, source_entries, source_cdf,
+                                 face_idxs, tex_vecs, lm_shapes, lm_offsets)
 
     return output, counts
 
@@ -161,6 +169,9 @@ def _make_source_ims(game_dir: pathlib.Path, faces: list[q2bsp.Face]) \
         # Scale the source map by this reflectivity.
         source_ims[face] *= tex_im_remapped
 
+    for face in faces:
+        source_ims[face] = (source_ims[face] * 255.).astype(np.uint8)
+
     return source_ims
 
 
@@ -180,11 +191,8 @@ def main():
 
     faces = [face for face in bsp.faces if face.has_lightmap(0)]
 
-    logger.info('making source images')
-    source_ims = _make_source_ims(game_dir, faces)
-
     logger.info('tracing')
-    output, counts = light_bsp(bsp, faces)
+    output, counts = light_bsp(bsp, game_dir, faces)
     print(repr(counts))
 
     if bsp_out_fname is not None:

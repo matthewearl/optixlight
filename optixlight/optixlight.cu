@@ -20,6 +20,37 @@ static __forceinline__ __device__ void sample_sphere(const float u1, const float
 }
 
 
+/*
+static __forceinline__ __device__ void sample_source(unsigned int &seed)
+{
+    Face *face;
+    SourceEntry *se;
+    int s, t;
+
+    // Binary search for a random source luxel.
+    {
+        unsigned int v = ((lcg(seed) & 0xffff) << 16) | (lcg(seed) & 0xffff);
+        unsigned int lo, hi, mid;
+        lo = -1;
+        hi = params.num_source_entries;
+        while (lo != hi - 1)
+        {
+            mid = (lo + hi) >> 1;
+            if (v < params.source_cdf[mid])
+                hi = mid;
+            else
+                lo = mid;
+        }
+        se = &params.source_entries[lo + 1];
+    }
+
+    face = &params.faces[se->face_idx];
+    s = se->tc.x;
+    t = se->tc.y;
+    atomicAdd(&params.output[face->lm_offset + s + t * face->lm_width], 1);
+}
+*/
+
 extern "C" __global__ void __raygen__rg()
 {
     const uint3 idx = optixGetLaunchIndex();

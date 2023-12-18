@@ -311,6 +311,8 @@ def _launch(pipeline: optix.Pipeline, sbt: optix.ShaderBindingTable,
             trav_handle: optix.TraversableHandle,
             num_rays: int,
             light_origin: np.ndarray,
+            source_entries: np.ndarray,
+            source_cdf: np.ndarray,
             tex_vecs: np.ndarray,
             lm_shapes: np.ndarray,
             lm_offsets: np.ndarray) -> np.ndarray:
@@ -324,6 +326,10 @@ def _launch(pipeline: optix.Pipeline, sbt: optix.ShaderBindingTable,
                        in zip(lm_shapes, lm_offsets, strict=True)) + 1
     h_output = np.zeros(output_shape, dtype='u4')
     d_output = cp.array(h_output)
+
+    d_source_entries = _array_to_device_memory(source_entries)
+    source_cdf = source_cdf[:1024].copy()
+    d_source_cdf = _array_to_device_memory(source_cdf)
 
     # Make face info.  Structs seem to have a size that is a multiple of
     # SBT_RECORD_ALIGNMENT, but I don't know how robust this is...
@@ -351,6 +357,9 @@ def _launch(pipeline: optix.Pipeline, sbt: optix.ShaderBindingTable,
         ('u8', 'counts', d_counts.data.ptr),
         ('u8', 'output', d_output.data.ptr),
         ('u8', 'faces', d_face_info.ptr),
+        ('u8', 'source_entries', d_source_entries.ptr),
+        ('u8', 'source_cdf', d_source_cdf.ptr),
+        ('u4', 'num_source_entries', len(source_entries)),
         ('u4', 'seed', 0),
         ('f4', 'lx', light_origin[0]),
         ('f4', 'ly', light_origin[1]),
@@ -387,6 +396,8 @@ def _launch(pipeline: optix.Pipeline, sbt: optix.ShaderBindingTable,
 
 def trace(tris: np.ndarray,
           light_origin: np.ndarray,
+          source_entries: np.ndarray,
+          source_cdf: np.ndarray,
           face_idxs: np.ndarray,
           tex_vecs: np.ndarray,
           lm_shapes: np.ndarray,
@@ -394,7 +405,10 @@ def trace(tris: np.ndarray,
     """
     Arguments:
         tris: (n, 3, 3) float array of triangle vertices.
-        light_origin (3,) float array with the light origin.
+        light_origin: (3,) float array with the light origin.
+        source_entries: (n_sources,) light source records.
+        source_cdf: (n_sources,) uint32 array light source cumulative
+            distribution function, scaled by (1<<32).
         face_idxs: (n,) int array of face indices, one per tri.
         tex_vecs: (m, 2, 4) float array of texture coordinates.
             `v[i, 0] @ (x, y, z, 1)` gives the s texture coordinate of the
@@ -417,7 +431,11 @@ def trace(tris: np.ndarray,
     pipeline = _create_pipeline(ctx, prog_groups, pipeline_options)
     sbt = _create_sbt(prog_groups, len(tex_vecs))
 
-    counts, output = _launch(pipeline, sbt, gas_handle, 100_000_000,
-                             light_origin, tex_vecs, lm_shapes, lm_offsets)
+    counts, output = _launch(pipeline, sbt, gas_handle,
+                             100_000_000,
+                             light_origin,
+                             source_entries,
+                             source_cdf,
+                             tex_vecs, lm_shapes, lm_offsets)
 
     return output, counts

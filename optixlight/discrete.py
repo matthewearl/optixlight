@@ -7,11 +7,12 @@ from . import q2bsp
 
 logger = logging.getLogger(__name__)
 
-_entry_dtype = np.dtype([
+entry_dtype = np.dtype([
     ('p', np.float32),
     ('face_idx', np.uint32),
-    ('tc', np.uint8, 2),
     ('color', np.uint8, 3),
+    ('pad', np.uint8),
+    ('tc', np.uint8, 2),
 ])
 
 
@@ -39,7 +40,8 @@ def random_sample(cdf):
 
 
 def build_source_cdf(faces: list[q2bsp.Face],
-                     source_ims: dict[q2bsp.Face, np.ndarray]):
+                     source_ims: dict[q2bsp.Face, np.ndarray]) \
+        -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     if set(faces) != set(source_ims.keys()):
         raise ValueError("There must be an image for every face")
 
@@ -48,10 +50,10 @@ def build_source_cdf(faces: list[q2bsp.Face],
         np.sum(np.any(source_ims[face] > 0, axis=2))
         for face in faces
     ])
-    entries = np.empty(num_entries, dtype=_entry_dtype)
+    entries = np.empty(num_entries, dtype=entry_dtype)
     i = 0
     for face_idx, face in enumerate(faces):
-        source_im = face.extract_lightmap(0)
+        source_im = source_ims[face]
         for t in range(source_im.shape[0]):
             for s in range(source_im.shape[1]):
                 color = source_im[t, s]
