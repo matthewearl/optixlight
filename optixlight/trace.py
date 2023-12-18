@@ -330,7 +330,7 @@ def _launch(pipeline: optix.Pipeline, sbt: optix.ShaderBindingTable,
             lm_offsets: np.ndarray) -> np.ndarray:
     logger.info( "Launching ... " )
 
-    h_counts = np.zeros(num_tris + 1, dtype='u4')
+    h_counts = np.zeros(len(lm_shapes) + 1, dtype='u4')
     d_counts = cp.array(h_counts)
 
     output_shape = max(shape[0] * shape[1] + offset
