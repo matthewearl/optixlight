@@ -133,7 +133,6 @@ def _launch(pipeline: ox.Pipeline, sbt: ox.ShaderBindingTable,
     d_output = cp.array(h_output)
 
     d_source_entries = optix.struct.array_to_device_memory(source_entries)
-    source_cdf = source_cdf[:1024].copy()
     d_source_cdf = cp.array(source_cdf)
 
     # Make face info.  Structs seem to have a size that is a multiple of
