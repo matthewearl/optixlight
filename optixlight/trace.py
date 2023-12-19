@@ -11,6 +11,26 @@ import optix.struct
 logger = logging.getLogger(__name__)
 
 
+def _make_aligned_dtype(fields, align):
+    names = [name for fmt, name in fields]
+    formats = [fmt for fmt, name in fields]
+    itemsize = optix.struct._aligned_itemsize(formats, align)
+    return np.dtype({
+        'names'     : names,
+        'formats'   : formats,
+        'itemsize'  : itemsize,
+        'align'     : True
+    })
+
+
+entry_dtype = _make_aligned_dtype([
+    ('f4', 'p'),
+    ('u4', 'face_idx'),
+    ('3u1', 'color'),
+    ('2u1', 'tc'),
+], 8)
+
+
 def _create_ctx() -> ox.DeviceContext:
     def log(level, tag, msg):
         logger.info(f"[{level:>2}][{tag:>12}]: {msg}")
@@ -53,9 +73,9 @@ def _create_module(ctx: ox.DeviceContext,
     return ox.Module(
         ctx, cuda_src_path, compile_opts, pipeline_options,
         compile_flags=[
-            #'-G',
+            '-G',
             '-use_fast_math',
-            #'-lineinfo',
+            '-lineinfo',
             '-default-device',
             '-std=c++11',
             #'-rdc', 'true',
@@ -113,7 +133,6 @@ def _create_sbt(prog_groups: list[ox.ProgramGroup],
                                  miss_records=miss_sbt,
                                  hitgroup_records=hit_sbt)
 
-
 def _launch(pipeline: ox.Pipeline, sbt: ox.ShaderBindingTable,
             gas: ox.AccelerationStructure,
             num_rays: int,
@@ -137,16 +156,13 @@ def _launch(pipeline: ox.Pipeline, sbt: ox.ShaderBindingTable,
 
     # Make face info.  Structs seem to have a size that is a multiple of
     # SBT_RECORD_ALIGNMENT, but I don't know how robust this is...
-    formats = ['4f4', '4f4', 'u4', 'u4', 'u4']
-    itemsize = optix.struct._aligned_itemsize(formats, 8)
-    dtype = np.dtype({
-        'names'     : ['m0', 'm1',
-                       'lm_width', 'lm_height',
-                       'lm_offset'],
-        'formats'   : formats,
-        'itemsize'  : itemsize,
-        'align'     : True
-    })
+    dtype = _make_aligned_dtype([
+        ('4f4', 'm0'),
+        ('4f4', 'm1'),
+        ('u4', 'lm_width'),
+        ('u4', 'lm_height'),
+        ('u4', 'lm_offset'),
+    ], 8)
     h_face_info = np.array([
         (M[0].astype(np.float32), M[1].astype(np.float32),
          lm_shape[1], lm_shape[0],

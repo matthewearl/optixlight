@@ -9,28 +9,20 @@ __constant__ Params params;
 }
 
 
-static __forceinline__ __device__ void sample_sphere(const float u1, const float u2, float3& p)
-{
-    const float theta = 2.0f * M_PIf * u1;
-    const float phi = acosf(2.0f * u2 - 1.0f);
-
-    p.x = sinf(phi) * cosf(theta);
-    p.y = sinf(phi) * sinf(theta);
-    p.z = cosf(phi);
-}
+#define SAMPLE_SOURCE
 
 
-/*
+#ifdef SAMPLE_SOURCE
 static __forceinline__ __device__ void sample_source(unsigned int &seed)
 {
     Face *face;
-    SourceEntry *se;
+    SourceEntry *se = NULL;
     int s, t;
 
     // Binary search for a random source luxel.
     {
         unsigned int v = ((lcg(seed) & 0xffff) << 16) | (lcg(seed) & 0xffff);
-        unsigned int lo, hi, mid;
+        int lo, hi, mid;
         lo = -1;
         hi = params.num_source_entries;
         while (lo != hi - 1)
@@ -49,19 +41,33 @@ static __forceinline__ __device__ void sample_source(unsigned int &seed)
     t = se->tc.y;
     atomicAdd(&params.output[face->lm_offset + s + t * face->lm_width], 1);
 }
-*/
+#else
+static __forceinline__ __device__ void sample_sphere(const float u1, const float u2, float3& p)
+{
+    const float theta = 2.0f * M_PIf * u1;
+    const float phi = acosf(2.0f * u2 - 1.0f);
+
+    p.x = sinf(phi) * cosf(theta);
+    p.y = sinf(phi) * sinf(theta);
+    p.z = cosf(phi);
+}
+#endif
 
 extern "C" __global__ void __raygen__rg()
 {
     const uint3 idx = optixGetLaunchIndex();
     unsigned int seed = tea<4>(idx.x, params.seed);
+
+#ifdef SAMPLE_SOURCE
+    sample_source(seed);
+#else
+    // Trace the ray against our scene hierarchy
     const float3 ray_origin = params.light_origin;
     float3 ray_direction;
+    unsigned int p0;
 
     sample_sphere(rnd(seed), rnd(seed), ray_direction);
 
-    // Trace the ray against our scene hierarchy
-    unsigned int p0;
     optixTrace(
             params.handle,
             ray_origin,
@@ -76,6 +82,7 @@ extern "C" __global__ void __raygen__rg()
             0,                   // missSBTIndex -- See SBT discussion
             p0);
     atomicAdd(&params.counts[p0], 1);
+#endif
 }
 
 extern "C" __global__ void __miss__ms()

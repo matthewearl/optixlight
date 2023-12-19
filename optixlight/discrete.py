@@ -3,17 +3,10 @@ import logging
 import numpy as np
 
 from . import q2bsp
+from .trace import entry_dtype
 
 
 logger = logging.getLogger(__name__)
-
-entry_dtype = np.dtype([
-    ('p', np.float32),
-    ('face_idx', np.uint32),
-    ('color', np.uint8, 3),
-    ('pad', np.uint8),
-    ('tc', np.uint8, 2),
-])
 
 
 def _binary_search(cdf, v):
