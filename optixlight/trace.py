@@ -107,6 +107,7 @@ def _create_sbt(prog_groups: list[ox.ProgramGroup],
         hit_record['idx'] = i
         hit_records.append(hit_record)
     hit_sbt = np.concatenate([hr.array for hr in hit_records])
+    hit_sbt = np.array(hit_sbt, dtype=hit_records[0].array.dtype)
 
     return ox.ShaderBindingTable(raygen_record=raygen_sbt,
                                  miss_records=miss_sbt,
@@ -138,7 +139,7 @@ def _launch(pipeline: ox.Pipeline, sbt: ox.ShaderBindingTable,
     # Make face info.  Structs seem to have a size that is a multiple of
     # SBT_RECORD_ALIGNMENT, but I don't know how robust this is...
     formats = ['4f4', '4f4', 'u4', 'u4', 'u4']
-    itemsize = _get_aligned_itemsize(formats, optix.SBT_RECORD_ALIGNMENT)
+    itemsize = optix.struct._aligned_itemsize(formats, 8)
     dtype = np.dtype({
         'names'     : ['m0', 'm1',
                        'lm_width', 'lm_height',
@@ -163,7 +164,7 @@ def _launch(pipeline: ox.Pipeline, sbt: ox.ShaderBindingTable,
         ('u8', 'faces'),
         ('u8', 'source_entries'),
         ('u8', 'source_cdf'),
-        ('u4', 'num_source_entries')),
+        ('u4', 'num_source_entries'),
         ('u4', 'seed'),
         ('f4', 'lx'),
         ('f4', 'ly'),
