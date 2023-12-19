@@ -15,18 +15,21 @@ def _make_aligned_dtype(fields, align):
     names = [name for fmt, name in fields]
     formats = [fmt for fmt, name in fields]
     itemsize = optix.struct._aligned_itemsize(formats, align)
-    return np.dtype({
-        'names'     : names,
-        'formats'   : formats,
-        'itemsize'  : itemsize,
-        'align'     : True
-    })
+    return np.dtype(
+        {
+            'names'     : names,
+            'formats'   : formats,
+            'itemsize'  : itemsize,
+        },
+        align=True,
+    )
 
 
 entry_dtype = _make_aligned_dtype([
     ('f4', 'p'),
     ('u4', 'face_idx'),
     ('3u1', 'color'),
+    ('u1', 'pad'),  # align=True does not match CUDA alignment perfectly
     ('2u1', 'tc'),
 ], 8)
 
@@ -233,6 +236,29 @@ def trace(tris: np.ndarray,
     Returns:
         The output image.
     """
+
+    if False:
+        output_shape = max(shape[0] * shape[1] + offset
+                           for shape, offset
+                           in zip(lm_shapes, lm_offsets, strict=True))
+        output = np.zeros(output_shape, dtype='u4')
+        counts = np.zeros(len(lm_shapes) + 1, dtype='u4')
+        import tqdm
+        for _ in tqdm.tqdm(range(1_000_000 // len(source_entries))):
+            idxs = np.searchsorted(
+                source_cdf,
+                np.random.randint(0, 1<<32, size=(len(source_entries))),
+                side='right'
+            )
+            for e in source_entries[idxs]:
+                face_idx = e['face_idx']
+                lm_offs = lm_offsets[face_idx]
+                h, w = lm_shapes[face_idx]
+                s, t = e['tc']
+                output[lm_offs + s + t * w] += 1
+
+        return output, counts
+
     cuda_src_path = os.path.join(os.path.dirname(__file__), 'optixlight.cu')
 
     ctx = _create_ctx()
@@ -244,7 +270,7 @@ def trace(tris: np.ndarray,
     sbt = _create_sbt(prog_groups, len(tex_vecs))
 
     counts, output = _launch(pipeline, sbt, gas_handle,
-                             100_000_000,
+                             1_000_000,
                              light_origin,
                              source_entries,
                              source_cdf,
