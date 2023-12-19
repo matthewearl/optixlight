@@ -4,311 +4,117 @@ import os
 
 import cupy as cp
 import numpy as np
-import optix
-from pynvrtc.compiler import Program
+import optix as ox
+import optix.struct
 
 
 logger = logging.getLogger(__name__)
 
-include_paths = [
-    "/home/matt/NVIDIA-OptiX-SDK-7.3.0-linux64-x86_64/include",
-    "/home/matt/NVIDIA-OptiX-SDK-7.3.0-linux64-x86_64/SDK",
-]
-cuda_tk_path = "/usr/include"
-stddef_path = "/usr/include/linux"
 
-
-def _round_up( val, mult_of ):
-    return val if val % mult_of == 0 else val + mult_of - val % mult_of
-
-
-def _get_aligned_itemsize(formats, alignment):
-    names = []
-    for i in range(len(formats)):
-        names.append('x'+str(i))
-
-    temp_dtype = np.dtype({
-        'names'   : names,
-        'formats' : formats,
-        'align'   : True
-    })
-    return _round_up(temp_dtype.itemsize, alignment)
-
-
-def _compile_cuda(cuda_file):
-    with open(cuda_file, 'rb') as f:
-        src = f.read()
-
-    nvrtc_dll = os.environ.get('NVRTC_DLL')
-    if nvrtc_dll is None:
-        nvrtc_dll = ''
-    logger.info("NVRTC_DLL = %s", nvrtc_dll)
-    prog = Program( src.decode(), cuda_file,
-                    lib_name= nvrtc_dll )
-    compile_options = [
-        '-G',
-        '-use_fast_math',
-        '-lineinfo',
-        '-default-device',
-        '-std=c++11',
-        '-rdc', 'true',
-        f'-I{cuda_tk_path}',
-    ] + [f'-I{include_path}' for include_path in include_paths]
-
-    if (optix.version()[1] == 0):
-        compile_options.append( f'-I{stddef_path}' )
-
-    ptx = prog.compile( compile_options )
-    return ptx
-
-
-def _create_ctx() -> optix.DeviceContext:
+def _create_ctx() -> ox.DeviceContext:
     def log(level, tag, msg):
         logger.info(f"[{level:>2}][{tag:>12}]: {msg}")
+    ctx = ox.DeviceContext(validation_mode=True,
+                           log_callback_function=log,
+                           log_callback_level=3)
+    return ctx
 
-    ctx_options = optix.DeviceContextOptions(
-        logCallbackFunction = log,
-        logCallbackLevel    = 4
+
+def _create_accel(ctx: ox.DeviceContext, tris: np.ndarray,
+                  num_faces: int,
+                  face_idxs: np.ndarray) -> ox.AccelerationStructure:
+    build_input = ox.BuildInputTriangleArray(
+        tris.astype(np.float32).reshape(-1, 3),
+        num_sbt_records=num_faces,
+        sbt_record_offset_buffer=face_idxs.astype(np.uint32),
+        flags=[ox.GeometryFlags.NONE] * num_faces
     )
-    if optix.version()[1] >= 2:
-        ctx_options.validationMode = optix.DEVICE_CONTEXT_VALIDATION_MODE_ALL
-    cu_ctx = 0
-    return optix.deviceContextCreate( cu_ctx, ctx_options )
+    gas = ox.AccelerationStructure(ctx, build_input, compact=True)
+    return gas
 
 
-def _array_to_device_memory( numpy_array, stream=cp.cuda.Stream() ):
-    byte_size = numpy_array.size * numpy_array.dtype.itemsize
-    h_ptr = ctypes.c_void_p(numpy_array.ctypes.data)
-    d_mem = cp.cuda.memory.alloc(byte_size)
-    d_mem.copy_from_async(h_ptr, byte_size, stream)
-
-    return d_mem
-
-
-def _create_accel(ctx: optix.DeviceContext, tris: np.ndarray,
-                  face_idxs: np.ndarray,
-                  tex_vecs: np.ndarray) -> optix.TraversableHandle:
-    global d_sbt_indices, d_vertices
-
-    tris = tris.astype(np.float32)
-    face_idxs = face_idxs.astype(np.uint32)
-
-    d_vertices = _array_to_device_memory(tris)
-    d_sbt_indices = _array_to_device_memory(face_idxs)
-
-    accel_options = optix.AccelBuildOptions(
-        buildFlags = int( optix.BUILD_FLAG_ALLOW_COMPACTION ),
-        operation = optix.BUILD_OPERATION_BUILD
-    )
-
-    triangle_input = optix.BuildInputTriangleArray()
-    triangle_input.vertexFormat = optix.VERTEX_FORMAT_FLOAT3
-    triangle_input.vertexStrideInBytes = tris.dtype.itemsize * 3
-    triangle_input.numVertices = len(tris) * 3
-    triangle_input.vertexBuffers = [d_vertices.ptr]
-    triangle_input.flags = [optix.GEOMETRY_FLAG_DISABLE_ANYHIT] * len(tris)
-    triangle_input.numSbtRecords = len(tris)
-    triangle_input.sbtIndexOffsetBuffer = d_sbt_indices.ptr
-    triangle_input.sbtIndexOffsetSizeInBytes = face_idxs.dtype.itemsize
-    triangle_input.sbtIndexOffsetStrideInBytes = face_idxs.dtype.itemsize
-
-    gas_buffer_sizes = ctx.accelComputeMemoryUsage([accel_options], [triangle_input])
-    d_temp_buffer_gas = cp.cuda.alloc(gas_buffer_sizes.tempSizeInBytes)
-    d_gas_output_buffer = cp.cuda.alloc(gas_buffer_sizes.outputSizeInBytes)
-    d_result = cp.array([0], dtype='u8')
-
-    emit_property = optix.AccelEmitDesc(
-        type = optix.PROPERTY_TYPE_COMPACTED_SIZE,
-        result = d_result.data.ptr
-    )
-
-    gas_handle = ctx.accelBuild(
-        0,    # CUDA stream
-        [ accel_options ],
-        [ triangle_input ],
-        d_temp_buffer_gas.ptr,
-        gas_buffer_sizes.tempSizeInBytes,
-        d_gas_output_buffer.ptr,
-        gas_buffer_sizes.outputSizeInBytes,
-        [emit_property]
-    )
-
-    compacted_gas_size = cp.asnumpy(d_result)[0]
-
-    if compacted_gas_size < gas_buffer_sizes.outputSizeInBytes:
-        # TODO: reallocate with call to `accelCompact`
-        pass
-
-    return gas_handle
-
-
-def _create_pipeline_options() -> optix.PipelineCompileOptions:
-    return optix.PipelineCompileOptions(
-        usesMotionBlur = False,
-        traversableGraphFlags = int( optix.TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_GAS ),
-        numPayloadValues = 1,
-        numAttributeValues = 1,  # TODO: Update
-        exceptionFlags = int(optix.EXCEPTION_FLAG_DEBUG),
-        pipelineLaunchParamsVariableName = "params",
-        usesPrimitiveTypeFlags = optix.PRIMITIVE_TYPE_FLAGS_TRIANGLE
+def _create_pipeline_options() -> ox.PipelineCompileOptions:
+    return ox.PipelineCompileOptions(
+        traversable_graph_flags=ox.TraversableGraphFlags.ALLOW_SINGLE_GAS,
+        num_payload_values=1,
+        num_attribute_values=3,
+        exception_flags=ox.ExceptionFlags.NONE,
+        pipeline_launch_params_variable_name="params"
     )
 
 
-def _create_module(ctx: optix.DeviceContext,
-                   pipeline_options: optix.PipelineCompileOptions,
-                   ptx) -> optix.Module:
-    logger.info("Creating OptiX module ...")
-    module_options = optix.ModuleCompileOptions(
-        maxRegisterCount = optix.COMPILE_DEFAULT_MAX_REGISTER_COUNT,
-        optLevel         = optix.COMPILE_OPTIMIZATION_DEFAULT,
-        debugLevel       = optix.COMPILE_DEBUG_LEVEL_DEFAULT
-        )
-
-    module, log = ctx.moduleCreateFromPTX(
-        module_options,
-        pipeline_options,
-        ptx
-        )
-    logger.info("\tModule create log: <<<{}>>>".format(log))
-    return module
-
-
-def _create_program_groups(ctx: optix.DeviceContext, module: optix.Module) \
-        -> list[optix.ProgramGroup]:
-    logger.info( "Creating program groups ... " )
-
-    raygen_prog_group_desc = optix.ProgramGroupDesc()
-    raygen_prog_group_desc.raygenModule = module
-    raygen_prog_group_desc.raygenEntryFunctionName = "__raygen__rg"
-    (raygen_prog_group,), log = ctx.programGroupCreate([raygen_prog_group_desc])
-    logger.info("\tProgramGroup raygen create log: <<<{}>>>".format(log))
-
-    miss_prog_group_desc = optix.ProgramGroupDesc()
-    miss_prog_group_desc.missModule = module
-    miss_prog_group_desc.missEntryFunctionName = "__miss__ms"
-    (miss_prog_group,), log = ctx.programGroupCreate([miss_prog_group_desc])
-    logger.info("\tProgramGroup miss create log: <<<{}>>>".format(log))
-
-    hitgroup_prog_group_desc = optix.ProgramGroupDesc()
-    hitgroup_prog_group_desc.hitgroupModuleCH = module
-    hitgroup_prog_group_desc.hitgroupEntryFunctionNameCH = "__closesthit__ch"
-    (hitgroup_prog_group,), log = ctx.programGroupCreate(
-        [hitgroup_prog_group_desc]
+def _create_module(ctx: ox.DeviceContext,
+                   pipeline_options: ox.PipelineCompileOptions,
+                   cuda_src_path: str) -> ox.Module:
+    compile_opts = ox.ModuleCompileOptions(
+        debug_level=ox.CompileDebugLevel.FULL,
+        opt_level=ox.CompileOptimizationLevel.LEVEL_0
     )
-    logger.info("\tProgramGroup hitgroup create log: <<<{}>>>".format(log))
-
-    return [raygen_prog_group, miss_prog_group, hitgroup_prog_group]
-
-
-def _create_pipeline(ctx: optix.DeviceContext,
-                     program_groups: list[optix.ProgramGroup],
-                     pipeline_compile_options: optix.PipelineCompileOptions) \
-                         -> optix.Pipeline:
-    logger.info("Creating pipeline ... ")
-
-    max_trace_depth = 1
-    pipeline_link_options = optix.PipelineLinkOptions()
-    pipeline_link_options.maxTraceDepth = max_trace_depth
-    pipeline_link_options.debugLevel = optix.COMPILE_DEBUG_LEVEL_FULL
-
-    log = ""
-    pipeline = ctx.pipelineCreate(
-        pipeline_compile_options,
-        pipeline_link_options,
-        program_groups,
-        log
+    return ox.Module(
+        ctx, cuda_src_path, compile_opts, pipeline_options,
+        compile_flags=[
+            #'-G',
+            '-use_fast_math',
+            #'-lineinfo',
+            '-default-device',
+            '-std=c++11',
+            #'-rdc', 'true',
+            '-I/home/matt/NVIDIA-OptiX-SDK-7.6.0-linux64-x86_64/SDK',
+        ]
     )
 
-    stack_sizes = optix.StackSizes()
-    for prog_group in program_groups:
-        optix.util.accumulateStackSizes(prog_group, stack_sizes)
 
-    (dc_stack_size_from_trav, dc_stack_size_from_state, cc_stack_size) = \
-        optix.util.computeStackSizes(
-            stack_sizes,
-            max_trace_depth,
-            0,  # maxCCDepth
-            0   # maxDCDepth
-            )
+def _create_program_groups(ctx: ox.DeviceContext, module: ox.Module) \
+        -> list[ox.ProgramGroup]:
+    raygen_grp = ox.ProgramGroup.create_raygen(ctx, module, "__raygen__rg")
+    miss_grp = ox.ProgramGroup.create_miss(ctx, module, "__miss__ms")
+    hit_grp = ox.ProgramGroup.create_hitgroup(ctx, module,
+                                              entry_function_CH="__closesthit__ch")
+    return raygen_grp, miss_grp, hit_grp
 
-    pipeline.setStackSize(
-        dc_stack_size_from_trav,
-        dc_stack_size_from_state,
-        cc_stack_size,
-        1   # maxTraversableDepth
-    )
+
+def _create_pipeline(ctx: ox.DeviceContext,
+                     program_groups: list[ox.ProgramGroup],
+                     pipeline_compile_options: ox.PipelineCompileOptions) \
+                         -> ox.Pipeline:
+    link_opts = ox.PipelineLinkOptions(max_trace_depth=1,
+                                       debug_level=ox.CompileDebugLevel.FULL)
+    pipeline = ox.Pipeline(ctx,
+                           compile_options=pipeline_compile_options,
+                           link_options=link_opts,
+                           program_groups=program_groups)
+    pipeline.compute_stack_sizes(1,  # max_trace_depth
+                                 0,  # max_cc_depth
+                                 1)  # max_dc_depth
 
     return pipeline
 
 
-def _create_sbt(prog_groups: list[optix.ProgramGroup],
-                num_faces: int) -> optix.ShaderBindingTable:
-    global d_raygen_sbt, d_miss_sbt, d_hitgroup_sbt
-    logging.debug("Creating sbt ... ")
+def _create_sbt(prog_groups: list[ox.ProgramGroup],
+                num_faces: int) -> ox.ShaderBindingTable:
+    raygen_grp, miss_grp, hit_grp = prog_groups
 
-    (raygen_prog_group, miss_prog_group, hitgroup_prog_group) = prog_groups
+    raygen_sbt = ox.SbtRecord(raygen_grp)
+    miss_sbt = ox.SbtRecord(miss_grp)
 
-    header_format = '{}B'.format( optix.SBT_RECORD_HEADER_SIZE )
-
-    #
-    # raygen record
-    #
-    formats = [header_format]
-    itemsize = _get_aligned_itemsize(formats, optix.SBT_RECORD_ALIGNMENT)
-    dtype = np.dtype( {
-        'names'     : ['header'],
-        'formats'   : formats,
-        'itemsize'  : itemsize,
-        'align'     : True
-        })
-    h_raygen_sbt = np.array([(0,)], dtype=dtype)
-    optix.sbtRecordPackHeader(raygen_prog_group, h_raygen_sbt)
-    d_raygen_sbt = _array_to_device_memory(h_raygen_sbt)
-
-    #
-    # miss record
-    #
-    formats = [header_format]
-    itemsize = _get_aligned_itemsize(formats, optix.SBT_RECORD_ALIGNMENT)
-    dtype = np.dtype( {
-        'names'     : ['header'],
-        'formats'   : formats,
-        'itemsize'  : itemsize,
-        'align'     : True
-        })
-    h_miss_sbt = np.array([(0,)], dtype=dtype)
-    optix.sbtRecordPackHeader(miss_prog_group, h_miss_sbt)
-    d_miss_sbt = _array_to_device_memory(h_miss_sbt)
-
-    #
-    # hitgroup record
-    #
-    formats = [header_format, 'u4']
-    itemsize = _get_aligned_itemsize(formats, optix.SBT_RECORD_ALIGNMENT)
-    dtype = np.dtype({
-        'names'     : ['header', 'face_idx'],
-        'formats'   : formats,
-        'itemsize'  : itemsize,
-        'align'     : True
-    })
-    h_hitgroup_sbt = np.array([(0, i) for i in range(num_faces)], dtype=dtype)
+    hit_field_names = ('idx',)
+    hit_field_formats = ('u4')
+    hit_records = []
     for i in range(num_faces):
-        optix.sbtRecordPackHeader(hitgroup_prog_group, h_hitgroup_sbt[i])
-    d_hitgroup_sbt = _array_to_device_memory( h_hitgroup_sbt )
+        hit_record = ox.SbtRecord(hit_grp,
+                                  names=hit_field_names,
+                                  formats=hit_field_formats)
+        hit_record['idx'] = i
+        hit_records.append(hit_record)
+    hit_sbt = np.concatenate([hr.array for hr in hit_records])
 
-    return optix.ShaderBindingTable(
-        raygenRecord=d_raygen_sbt.ptr,
-        missRecordBase=d_miss_sbt.ptr,
-        missRecordStrideInBytes=h_miss_sbt.dtype.itemsize,
-        missRecordCount=1,
-        hitgroupRecordBase=d_hitgroup_sbt.ptr,
-        hitgroupRecordStrideInBytes=h_hitgroup_sbt.dtype.itemsize,
-        hitgroupRecordCount=num_faces
-    )
+    return ox.ShaderBindingTable(raygen_record=raygen_sbt,
+                                 miss_records=miss_sbt,
+                                 hitgroup_records=hit_sbt)
 
 
-def _launch(pipeline: optix.Pipeline, sbt: optix.ShaderBindingTable,
-            trav_handle: optix.TraversableHandle,
+def _launch(pipeline: ox.Pipeline, sbt: ox.ShaderBindingTable,
+            gas: ox.AccelerationStructure,
             num_rays: int,
             light_origin: np.ndarray,
             source_entries: np.ndarray,
@@ -316,8 +122,6 @@ def _launch(pipeline: optix.Pipeline, sbt: optix.ShaderBindingTable,
             tex_vecs: np.ndarray,
             lm_shapes: np.ndarray,
             lm_offsets: np.ndarray) -> np.ndarray:
-    logger.info( "Launching ... " )
-
     h_counts = np.zeros(len(lm_shapes) + 1, dtype='u4')
     d_counts = cp.array(h_counts)
 
@@ -327,9 +131,9 @@ def _launch(pipeline: optix.Pipeline, sbt: optix.ShaderBindingTable,
     h_output = np.zeros(output_shape, dtype='u4')
     d_output = cp.array(h_output)
 
-    d_source_entries = _array_to_device_memory(source_entries)
+    d_source_entries = optix.struct.array_to_device_memory(source_entries)
     source_cdf = source_cdf[:1024].copy()
-    d_source_cdf = _array_to_device_memory(source_cdf)
+    d_source_cdf = cp.array(source_cdf)
 
     # Make face info.  Structs seem to have a size that is a multiple of
     # SBT_RECORD_ALIGNMENT, but I don't know how robust this is...
@@ -350,45 +154,38 @@ def _launch(pipeline: optix.Pipeline, sbt: optix.ShaderBindingTable,
         for M, lm_shape, lm_offset
         in zip(tex_vecs, lm_shapes, lm_offsets, strict=True)
     ], dtype=dtype)
-    d_face_info = _array_to_device_memory(h_face_info)
+    d_face_info = optix.struct.array_to_device_memory(h_face_info)
 
-    params = [
-        ('u8', 'trav_handle', trav_handle),
-        ('u8', 'counts', d_counts.data.ptr),
-        ('u8', 'output', d_output.data.ptr),
-        ('u8', 'faces', d_face_info.ptr),
-        ('u8', 'source_entries', d_source_entries.ptr),
-        ('u8', 'source_cdf', d_source_cdf.ptr),
-        ('u4', 'num_source_entries', len(source_entries)),
-        ('u4', 'seed', 0),
-        ('f4', 'lx', light_origin[0]),
-        ('f4', 'ly', light_origin[1]),
-        ('f4', 'lz', light_origin[2]),
+    params_tmp = [
+        ('u8', 'trav_handle'),
+        ('u8', 'counts'),
+        ('u8', 'output'),
+        ('u8', 'faces'),
+        ('u8', 'source_entries'),
+        ('u8', 'source_cdf'),
+        ('u4', 'num_source_entries')),
+        ('u4', 'seed'),
+        ('f4', 'lx'),
+        ('f4', 'ly'),
+        ('f4', 'lz'),
     ]
-
-    formats = [x[0] for x in params]
-    names = [x[1] for x in params]
-    values = [x[2] for x in params]
-    itemsize = _get_aligned_itemsize(formats, 8)
-    params_dtype = np.dtype({
-        'names'   : names,
-        'formats' : formats,
-        'itemsize': itemsize,
-        'align'   : True,
-    })
-    h_params = np.array([tuple(values)], dtype=params_dtype)
-    d_params = _array_to_device_memory(h_params)
+    params = ox.LaunchParamsRecord(names=[p[1] for p in params_tmp],
+                                   formats=[p[0] for p in params_tmp])
+    params['trav_handle'] = gas.handle
+    params['counts'] = d_counts.data.ptr
+    params['output'] = d_output.data.ptr
+    params['faces'] = d_face_info.ptr
+    params['source_entries'] = d_source_entries.ptr
+    params['source_cdf'] = d_source_cdf.data.ptr
+    params['num_source_entries'] = len(source_entries)
+    params['seed'] = 0
+    params['lx'] = light_origin[0]
+    params['ly'] = light_origin[1]
+    params['lz'] = light_origin[2]
 
     stream = cp.cuda.Stream()
-    optix.launch(
-        pipeline,
-        stream.ptr,
-        d_params.ptr,
-        h_params.dtype.itemsize,
-        sbt,
-        num_rays, 1, 1
-    )
-
+    pipeline.launch(sbt, dimensions=(num_rays, 1, 1), params=params,
+                    stream=stream)
     stream.synchronize()
 
     return cp.asnumpy(d_counts), cp.asnumpy(d_output)
@@ -420,13 +217,12 @@ def trace(tris: np.ndarray,
     Returns:
         The output image.
     """
-    optixlight_cu = os.path.join(os.path.dirname(__file__), 'optixlight.cu')
-    optixlight_ptx = _compile_cuda(optixlight_cu)
+    cuda_src_path = os.path.join(os.path.dirname(__file__), 'optixlight.cu')
 
     ctx = _create_ctx()
-    gas_handle = _create_accel(ctx, tris, face_idxs, tex_vecs)
+    gas_handle = _create_accel(ctx, tris, len(tex_vecs), face_idxs)
     pipeline_options = _create_pipeline_options()
-    module = _create_module(ctx, pipeline_options, optixlight_ptx)
+    module = _create_module(ctx, pipeline_options, cuda_src_path)
     prog_groups = _create_program_groups(ctx, module)
     pipeline = _create_pipeline(ctx, prog_groups, pipeline_options)
     sbt = _create_sbt(prog_groups, len(tex_vecs))
