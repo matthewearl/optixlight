@@ -24,7 +24,7 @@ static __forceinline__ __device__ void sample_source(unsigned int &seed)
         unsigned int v = ((lcg(seed) & 0xffffff) << 8) | (lcg(seed) & 0xff);
         int lo, hi, mid;
         lo = -1;
-        hi = params.num_source_entries;
+        hi = params.num_source_entries - 1;
         while (lo != hi - 1)
         {
             mid = (lo + hi) >> 1;
