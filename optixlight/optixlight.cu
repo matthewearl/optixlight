@@ -59,29 +59,33 @@ extern "C" __global__ void __raygen__rg()
     unsigned int seed = tea<4>(idx.x, params.seed);
 
 #ifdef SAMPLE_SOURCE
-    sample_source(seed);
+    for (int i = 0; i < params.rays_per_thread; i++)
+        sample_source(seed);
 #else
     // Trace the ray against our scene hierarchy
     const float3 ray_origin = params.light_origin;
     float3 ray_direction;
     unsigned int p0;
 
-    sample_sphere(rnd(seed), rnd(seed), ray_direction);
+    for (int i = 0; i < params.rays_per_thread; i++)
+    {
+        sample_sphere(rnd(seed), rnd(seed), ray_direction);
 
-    optixTrace(
-            params.handle,
-            ray_origin,
-            ray_direction,
-            0.0f,                // Min intersection distance
-            1e16f,               // Max intersection distance
-            0.0f,                // rayTime -- used for motion blur
-            OptixVisibilityMask(255), // Specify always visible
-            OPTIX_RAY_FLAG_NONE,
-            0,                   // SBT offset   -- See SBT discussion
-            1,                   // SBT stride   -- See SBT discussion
-            0,                   // missSBTIndex -- See SBT discussion
-            p0);
-    atomicAdd(&params.counts[p0], 1);
+        optixTrace(
+                params.handle,
+                ray_origin,
+                ray_direction,
+                0.0f,                // Min intersection distance
+                1e16f,               // Max intersection distance
+                0.0f,                // rayTime -- used for motion blur
+                OptixVisibilityMask(255), // Specify always visible
+                OPTIX_RAY_FLAG_NONE,
+                0,                   // SBT offset   -- See SBT discussion
+                1,                   // SBT stride   -- See SBT discussion
+                0,                   // missSBTIndex -- See SBT discussion
+                p0);
+        atomicAdd(&params.counts[p0], 1);
+    }
 #endif
 }
 

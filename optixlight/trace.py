@@ -138,7 +138,8 @@ def _create_sbt(prog_groups: list[ox.ProgramGroup],
 
 def _launch(pipeline: ox.Pipeline, sbt: ox.ShaderBindingTable,
             gas: ox.AccelerationStructure,
-            num_rays: int,
+            num_threads: int,
+            rays_per_thread: int,
             light_origin: np.ndarray,
             source_entries: np.ndarray,
             source_cdf: np.ndarray,
@@ -184,6 +185,7 @@ def _launch(pipeline: ox.Pipeline, sbt: ox.ShaderBindingTable,
         ('u8', 'source_cdf'),
         ('u4', 'num_source_entries'),
         ('u4', 'seed'),
+        ('u4', 'rays_per_thread'),
         ('f4', 'lx'),
         ('f4', 'ly'),
         ('f4', 'lz'),
@@ -198,12 +200,13 @@ def _launch(pipeline: ox.Pipeline, sbt: ox.ShaderBindingTable,
     params['source_cdf'] = d_source_cdf.data.ptr
     params['num_source_entries'] = len(source_entries)
     params['seed'] = 0
+    params['rays_per_thread'] = rays_per_thread
     params['lx'] = light_origin[0]
     params['ly'] = light_origin[1]
     params['lz'] = light_origin[2]
 
     stream = cp.cuda.Stream()
-    pipeline.launch(sbt, dimensions=(num_rays, 1, 1), params=params,
+    pipeline.launch(sbt, dimensions=(num_threads, 1, 1), params=params,
                     stream=stream)
     stream.synchronize()
 
@@ -269,8 +272,10 @@ def trace(tris: np.ndarray,
     pipeline = _create_pipeline(ctx, prog_groups, pipeline_options)
     sbt = _create_sbt(prog_groups, len(tex_vecs))
 
+    num_threads = 10_000
     counts, output = _launch(pipeline, sbt, gas_handle,
-                             1_000_000,
+                             num_threads,
+                             1_000_000 // num_threads,
                              light_origin,
                              source_entries,
                              source_cdf,
