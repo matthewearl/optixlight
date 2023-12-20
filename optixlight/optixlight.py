@@ -89,20 +89,17 @@ def _create_new_lms(faces: list[q2bsp.Face], output: np.ndarray) \
     for face in faces:
         offs = face.lightmap_offset
         h, w = face.lightmap_shape
-        new_lm = output[offs:offs + w*h].reshape(h, w)
+        new_lm = output[offs:offs + w*h*3].reshape(h, w, 3)
 
         # Texels that are only partially visible due to being on the edge of
         # the face should be boosted in brightness.
-        new_lm = new_lm / np.maximum(_luxel_area(face), 1e-5)
+        new_lm = new_lm / np.maximum(_luxel_area(face)[:, :, None], 1e-5)
 
         new_lms[face] = new_lm
 
     # Adjust levels to be sensible, and set the array to the correct format.
-    max_count = np.max([np.max(new_lm) for new_lm in new_lms.values()])
-    new_lms = {face: (255 * (new_lm / max_count) ** 0.5).astype(np.uint8)
-               for face, new_lm in new_lms.items()}
-    new_lms = {face: np.stack([new_lm] * 3, axis=2)
-               for face, new_lm in new_lms.items()}
+    new_lms = {face: np.clip(new_lm, 0, 255).astype(np.uint8)
+                for face, new_lm in new_lms.items()}
 
     return new_lms
 

@@ -17,7 +17,9 @@ static __forceinline__ __device__ void sample_source(unsigned int &seed)
 {
     Face *face;
     SourceEntry *se = NULL;
-    int s, t;
+    int s, t, i;
+    float3 *output_el;
+    float scale;
 
     // Binary search for a random source luxel.
     {
@@ -39,7 +41,20 @@ static __forceinline__ __device__ void sample_source(unsigned int &seed)
     face = &params.faces[se->face_idx];
     s = se->tc.x;
     t = se->tc.y;
-    atomicAdd(&params.output[face->lm_offset + s + t * face->lm_width], 1);
+
+    scale = 1.0f / (se->p * params.rays_per_thread);
+    atomicAdd(
+        &params.output[face->lm_offset + 3 * (s + t * face->lm_width) + 0],
+        se->color.x * scale
+    );
+    atomicAdd(
+        &params.output[face->lm_offset + 3 * (s + t * face->lm_width) + 1],
+        se->color.y * scale
+    );
+    atomicAdd(
+        &params.output[face->lm_offset + 3 * (s + t * face->lm_width) + 2],
+        se->color.z * scale
+    );
 }
 #else
 static __forceinline__ __device__ void sample_sphere(const float u1, const float u2, float3& p)

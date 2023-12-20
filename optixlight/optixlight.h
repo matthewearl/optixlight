@@ -20,7 +20,7 @@ struct Params
 {
     OptixTraversableHandle handle;
     unsigned int *counts;
-    unsigned int *output;
+    float *output;
     Face *faces;
     SourceEntry *source_entries;
     unsigned int *source_cdf;

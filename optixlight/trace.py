@@ -149,10 +149,10 @@ def _launch(pipeline: ox.Pipeline, sbt: ox.ShaderBindingTable,
     h_counts = np.zeros(len(lm_shapes) + 1, dtype='u4')
     d_counts = cp.array(h_counts)
 
-    output_shape = max(shape[0] * shape[1] + offset
+    output_shape = max(3 * shape[0] * shape[1] + offset
                        for shape, offset
-                       in zip(lm_shapes, lm_offsets, strict=True)) + 1
-    h_output = np.zeros(output_shape, dtype='u4')
+                       in zip(lm_shapes, lm_offsets, strict=True))
+    h_output = np.zeros(output_shape, dtype='f4')
     d_output = cp.array(h_output)
 
     d_source_entries = optix.struct.array_to_device_memory(source_entries)
@@ -210,7 +210,7 @@ def _launch(pipeline: ox.Pipeline, sbt: ox.ShaderBindingTable,
                     stream=stream)
     stream.synchronize()
 
-    return cp.asnumpy(d_counts), cp.asnumpy(d_output)
+    return cp.asnumpy(d_counts), cp.asnumpy(d_output) / num_threads
 
 
 def trace(tris: np.ndarray,
