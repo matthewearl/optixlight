@@ -136,6 +136,17 @@ def _create_sbt(prog_groups: list[ox.ProgramGroup],
                                  miss_records=miss_sbt,
                                  hitgroup_records=hit_sbt)
 
+def _find_tangents(normal):
+    """Find two vectors orthogonal to the given vector"""
+    temp = np.zeros(3)
+    temp[np.argmin(normal)] = 1.0
+    tangent1 = np.cross(normal, temp)
+    tangent1 /= np.linalg.norm(tangent1)
+    tangent2 = np.cross(normal, tangent1)
+
+    return tangent1, tangent2
+
+
 def _launch(pipeline: ox.Pipeline, sbt: ox.ShaderBindingTable,
             gas: ox.AccelerationStructure,
             num_threads: int,
@@ -165,13 +176,15 @@ def _launch(pipeline: ox.Pipeline, sbt: ox.ShaderBindingTable,
         ('4f4', 'm0'),
         ('4f4', 'm1'),
         ('3f4', 'normal'),
+        ('3f4', 'tangent1'),
+        ('3f4', 'tangent2'),
         ('u4', 'lm_width'),
         ('u4', 'lm_height'),
         ('u4', 'lm_offset'),
     ], 16)
     h_face_info = np.array([
         (M[0].astype(np.float32), M[1].astype(np.float32),
-         normal,
+         normal, *_find_tangents(normal),
          lm_shape[1], lm_shape[0],
          lm_offset)
         for normal, M, lm_shape, lm_offset

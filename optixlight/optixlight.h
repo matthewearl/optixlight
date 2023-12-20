@@ -12,6 +12,8 @@ struct Face
     float4 m0;
     float4 m1;
     float3 normal;
+    float3 tangent1;
+    float3 tangent2;
     unsigned int lm_width;
     unsigned int lm_height;
     unsigned int lm_offset;
