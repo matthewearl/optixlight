@@ -143,6 +143,7 @@ def _launch(pipeline: ox.Pipeline, sbt: ox.ShaderBindingTable,
             light_origin: np.ndarray,
             source_entries: np.ndarray,
             source_cdf: np.ndarray,
+            normals: np.ndarray,
             tex_vecs: np.ndarray,
             lm_shapes: np.ndarray,
             lm_offsets: np.ndarray) -> np.ndarray:
@@ -163,16 +164,18 @@ def _launch(pipeline: ox.Pipeline, sbt: ox.ShaderBindingTable,
     dtype = _make_aligned_dtype([
         ('4f4', 'm0'),
         ('4f4', 'm1'),
+        ('3f4', 'normal'),
         ('u4', 'lm_width'),
         ('u4', 'lm_height'),
         ('u4', 'lm_offset'),
-    ], 8)
+    ], 16)
     h_face_info = np.array([
         (M[0].astype(np.float32), M[1].astype(np.float32),
+         normal,
          lm_shape[1], lm_shape[0],
          lm_offset)
-        for M, lm_shape, lm_offset
-        in zip(tex_vecs, lm_shapes, lm_offsets, strict=True)
+        for normal, M, lm_shape, lm_offset
+        in zip(normals, tex_vecs, lm_shapes, lm_offsets, strict=True)
     ], dtype=dtype)
     d_face_info = optix.struct.array_to_device_memory(h_face_info)
 
@@ -218,6 +221,7 @@ def trace(tris: np.ndarray,
           source_entries: np.ndarray,
           source_cdf: np.ndarray,
           face_idxs: np.ndarray,
+          normals: np.ndarray,
           tex_vecs: np.ndarray,
           lm_shapes: np.ndarray,
           lm_offsets: np.ndarray) -> np.ndarray:
@@ -229,6 +233,7 @@ def trace(tris: np.ndarray,
         source_cdf: (n_sources,) uint32 array light source cumulative
             distribution function, scaled by (1<<32).
         face_idxs: (n,) int array of face indices, one per tri.
+        normals: (m, 3) float array of face normals.
         tex_vecs: (m, 2, 4) float array of texture coordinates.
             `v[i, 0] @ (x, y, z, 1)` gives the s texture coordinate of the
             `i`'th face in the output image, and `v[i, 1] @ (x, y, z, 1)` gives
@@ -257,6 +262,6 @@ def trace(tris: np.ndarray,
                              light_origin,
                              source_entries,
                              source_cdf,
-                             tex_vecs, lm_shapes, lm_offsets)
+                             normals, tex_vecs, lm_shapes, lm_offsets)
 
     return output, counts

@@ -11,6 +11,7 @@ struct Face
 {
     float4 m0;
     float4 m1;
+    float3 normal;
     unsigned int lm_width;
     unsigned int lm_height;
     unsigned int lm_offset;
