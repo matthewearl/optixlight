@@ -21,7 +21,7 @@ static __forceinline__ __device__ void sample_source(unsigned int &seed)
 
     // Binary search for a random source luxel.
     {
-        unsigned int v = ((lcg(seed) & 0xffff) << 16) | (lcg(seed) & 0xffff);
+        unsigned int v = ((lcg(seed) & 0xffffff) << 8) | (lcg(seed) & 0xff);
         int lo, hi, mid;
         lo = -1;
         hi = params.num_source_entries;
