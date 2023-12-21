@@ -28,7 +28,7 @@ def _parse_tris(faces: list[q2bsp.Face]) -> np.ndarray:
 
 def _calculate_tex_vecs(faces: list[q2bsp.Face]) \
         -> tuple[np.ndarray, np.ndarray]:
-    tex_vecs = []
+    world_to_tcs = []
     for face in faces:
         tex_coords = np.array(list(face.tex_coords))
         mins = np.floor(
@@ -41,12 +41,43 @@ def _calculate_tex_vecs(faces: list[q2bsp.Face]) \
         M[0, 3] = face.tex_info.dist_s / 16 + 0.5 - mins[0]
         M[1, 3] = face.tex_info.dist_t / 16 + 0.5 - mins[1]
 
-        tex_vecs.append(M)
+        world_to_tcs.append(M)
 
-    face_idxs = np.repeat(np.arange(len(tex_vecs)),
+    face_idxs = np.repeat(np.arange(len(world_to_tcs)),
                           [(face.num_edges - 2) for face in faces])
 
-    return np.stack(tex_vecs, axis=0), face_idxs
+    return np.stack(world_to_tcs, axis=0), face_idxs
+
+
+def _invert_tex_vecs(world_to_tcs, faces):
+    """For each face, return a 3x3 map from TCs to world coords.
+
+    Each element `M` satisfies `M @ [s, t, 1] = [x, y, z]`,  for a texture
+    coordinate [s, t] and corresponding 3D point [x, y, z].
+
+    Note that this function can return points behind the geometry, since in
+    Quake 2 some faces do not actually have coplanar points!
+    """
+
+    normals = np.array([face.plane.normal for face in faces])
+
+    # For each face make a 4x4 matrix M that maps an augmented world space
+    # point [x, y, z, 1], which is the face's plane, to [s, t, 0, 1].
+    M = np.concatenate([
+        world_to_tcs,
+        np.concatenate([
+            normals,
+            -np.einsum('mi,mi->m', face_verts, normals)[:, None]
+        ], axis=1)[:, None, :],
+        np.broadcast_to(
+            np.array([0, 0, 0, 1])[None, None, :],
+            (len(world_to_tcs), 1, 4)
+        )
+    ], axis=1)
+
+    # Invert and get rid of the last row and the 3rd column, so that
+    # multiplying by [s, t, 1] gives [x, y, z], a point in world space.
+    return np.linalg.inv(M)[:, :3, [0, 1, 3]]
 
 
 def light_bsp(bsp: q2bsp.Q2Bsp, game_dir: pathlib.Path,
@@ -59,8 +90,9 @@ def light_bsp(bsp: q2bsp.Q2Bsp, game_dir: pathlib.Path,
     )
 
     logger.info('calculate tc matrices')
-    tex_vecs, face_idxs = _calculate_tex_vecs(faces)
-    assert len(tex_vecs) == np.max(face_idxs) + 1
+    world_to_tcs, face_idxs = _calculate_tex_vecs(faces)
+    assert len(world_to_tcs) == np.max(face_idxs) + 1
+    tc_to_worlds = _invert_tex_vecs(world_to_tcs, faces)
 
     logger.info('making source images')
     source_ims = _make_source_ims(game_dir, faces)
@@ -73,7 +105,7 @@ def light_bsp(bsp: q2bsp.Q2Bsp, game_dir: pathlib.Path,
     lm_shapes = np.stack([face.lightmap_shape for face in faces], axis=0)
     lm_offsets = np.array([face.lightmap_offset for face in faces])
     output, counts = trace.trace(tris, light_origin, source_entries, source_cdf,
-                                 face_idxs, normals, tex_vecs, lm_shapes,
+                                 face_idxs, normals, world_to_tcs, lm_shapes,
                                  lm_offsets)
 
     return output, counts

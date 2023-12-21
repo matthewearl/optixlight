@@ -155,7 +155,8 @@ def _launch(pipeline: ox.Pipeline, sbt: ox.ShaderBindingTable,
             source_entries: np.ndarray,
             source_cdf: np.ndarray,
             normals: np.ndarray,
-            tex_vecs: np.ndarray,
+            world_to_tcs: np.ndarray,
+            tc_to_worlds: np.ndarray,
             lm_shapes: np.ndarray,
             lm_offsets: np.ndarray) -> np.ndarray:
     h_counts = np.zeros(len(lm_shapes) + 1, dtype='u4')
@@ -173,8 +174,11 @@ def _launch(pipeline: ox.Pipeline, sbt: ox.ShaderBindingTable,
     # Make face info.  Structs seem to have a size that is a multiple of
     # SBT_RECORD_ALIGNMENT, but I don't know how robust this is...
     dtype = _make_aligned_dtype([
-        ('4f4', 'm0'),
-        ('4f4', 'm1'),
+        ('4f4', 'world_to_tc_0'),
+        ('4f4', 'world_to_tc_1'),
+        ('3f4', 'tc_to_world_0'),
+        ('3f4', 'tc_to_world_1'),
+        ('3f4', 'tc_to_world_2'),
         ('3f4', 'normal'),
         ('3f4', 'tangent1'),
         ('3f4', 'tangent2'),
@@ -183,12 +187,14 @@ def _launch(pipeline: ox.Pipeline, sbt: ox.ShaderBindingTable,
         ('u4', 'lm_offset'),
     ], 16)
     h_face_info = np.array([
-        (M[0].astype(np.float32), M[1].astype(np.float32),
+        (world_to_tc[0], world_to_tc[1],
+         tc_to_world[0], tc_to_world[1], tc_to_world[2],
          normal, *_find_tangents(normal),
          lm_shape[1], lm_shape[0],
          lm_offset)
-        for normal, M, lm_shape, lm_offset
-        in zip(normals, tex_vecs, lm_shapes, lm_offsets, strict=True)
+        for normal, world_to_tc, tc_to_world, lm_shape, lm_offset
+        in zip(normals, world_to_tcs, tc_to_worlds,
+               lm_shapes, lm_offsets, strict=True)
     ], dtype=dtype)
     d_face_info = optix.struct.array_to_device_memory(h_face_info)
 
@@ -235,7 +241,7 @@ def trace(tris: np.ndarray,
           source_cdf: np.ndarray,
           face_idxs: np.ndarray,
           normals: np.ndarray,
-          tex_vecs: np.ndarray,
+          world_to_tcs: np.ndarray,
           lm_shapes: np.ndarray,
           lm_offsets: np.ndarray) -> np.ndarray:
     """
@@ -247,10 +253,13 @@ def trace(tris: np.ndarray,
             distribution function, scaled by (1<<32).
         face_idxs: (n,) int array of face indices, one per tri.
         normals: (m, 3) float array of face normals.
-        tex_vecs: (m, 2, 4) float array of texture coordinates.
+        world_to_tcs: (m, 2, 4) float array of texture coordinate maps.
             `v[i, 0] @ (x, y, z, 1)` gives the s texture coordinate of the
             `i`'th face in the output image, and `v[i, 1] @ (x, y, z, 1)` gives
             the t texture coordinate.
+        tc_to_worlds: (m, 3, 3) float array of inverse texture coordinate maps.
+            Each element maps augmented texture coordinates [s, t, 1] into world
+            space coordinates [x, y, z], for the corresponding face.
         lm_shapes: (m, 2) int shape of each face's lightmap.
         lm_offsets: (m,) int array of each face's offset.
 
@@ -261,12 +270,12 @@ def trace(tris: np.ndarray,
     cuda_src_path = os.path.join(os.path.dirname(__file__), 'optixlight.cu')
 
     ctx = _create_ctx()
-    gas_handle = _create_accel(ctx, tris, len(tex_vecs), face_idxs)
+    gas_handle = _create_accel(ctx, tris, len(world_to_tcs), face_idxs)
     pipeline_options = _create_pipeline_options()
     module = _create_module(ctx, pipeline_options, cuda_src_path)
     prog_groups = _create_program_groups(ctx, module)
     pipeline = _create_pipeline(ctx, prog_groups, pipeline_options)
-    sbt = _create_sbt(prog_groups, len(tex_vecs))
+    sbt = _create_sbt(prog_groups, len(world_to_tcs))
 
     num_threads = 10_000
     counts, output = _launch(pipeline, sbt, gas_handle,
@@ -275,6 +284,7 @@ def trace(tris: np.ndarray,
                              light_origin,
                              source_entries,
                              source_cdf,
-                             normals, tex_vecs, lm_shapes, lm_offsets)
+                             normals, world_to_tcs, tc_to_worlds,
+                             lm_shapes, lm_offsets)
 
     return output, counts

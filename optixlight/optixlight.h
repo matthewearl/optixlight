@@ -9,8 +9,11 @@ struct SourceEntry
 
 struct Face
 {
-    float4 m0;
-    float4 m1;
+    float4 world_to_tc_0;
+    float4 world_to_tc_1;
+    float3 tc_to_world_0;
+    float3 tc_to_world_1;
+    float3 tc_to_world_2;
     float3 normal;
     float3 tangent1;
     float3 tangent2;
