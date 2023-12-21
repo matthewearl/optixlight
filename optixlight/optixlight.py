@@ -59,6 +59,7 @@ def _invert_tex_vecs(world_to_tcs, faces):
     Quake 2 some faces do not actually have coplanar points!
     """
 
+    face_verts = np.array([next(iter(face.vertices)) for face in faces])
     normals = np.array([face.plane.normal for face in faces])
 
     # For each face make a 4x4 matrix M that maps an augmented world space
@@ -105,8 +106,8 @@ def light_bsp(bsp: q2bsp.Q2Bsp, game_dir: pathlib.Path,
     lm_shapes = np.stack([face.lightmap_shape for face in faces], axis=0)
     lm_offsets = np.array([face.lightmap_offset for face in faces])
     output, counts = trace.trace(tris, light_origin, source_entries, source_cdf,
-                                 face_idxs, normals, world_to_tcs, lm_shapes,
-                                 lm_offsets)
+                                 face_idxs, normals, world_to_tcs, tc_to_worlds,
+                                 lm_shapes, lm_offsets)
 
     return output, counts
 

@@ -242,6 +242,7 @@ def trace(tris: np.ndarray,
           face_idxs: np.ndarray,
           normals: np.ndarray,
           world_to_tcs: np.ndarray,
+          tc_to_worlds: np.ndarray,
           lm_shapes: np.ndarray,
           lm_offsets: np.ndarray) -> np.ndarray:
     """
