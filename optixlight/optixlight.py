@@ -21,6 +21,9 @@ def _parse_tris(faces: list[q2bsp.Face]) -> np.ndarray:
     for f in faces:
         vertices = list(f.vertices)
         v1 = vertices[0]
+        # Note a few percent of faces in Quake 2 maps are not convex. This
+        # triangulation will be slightly wrong for those but I doubt it'll be a
+        # big deal.
         for v2, v3 in zip(vertices[1:-1], vertices[2:]):
             tris.append([v1, v2, v3])
     return np.array(tris)
