@@ -23,8 +23,6 @@ def _poly_truncate(pts, d, axis, side):
         keep = ~keep
 
     new_pts = []
-    n = 0
-    new_pts = np.empty((len(pts) + 1, 2), dtype=pts.dtype)
     for i1 in range(len(pts)):
         i2 = (i1 + 1) % len(pts)
         keep1 = keep[i1]
@@ -32,16 +30,16 @@ def _poly_truncate(pts, d, axis, side):
 
         if keep1:
             pt1 = pts[i1]
-            new_pts[n] = pt1
-            n += 1
+            new_pts.append(pt1)
             if not keep2:
                 pt2 = pts[i2]
-                new_pts[n] = _find_poi(pt1, pt2, d, axis)
-                n += 1
+                new_pts.append(_find_poi(pt1, pt2, d, axis))
         elif keep2:
-            new_pts[n] = _find_poi(pts[i1], pts[i2], d, axis)
-            n += 1
-    return new_pts[:n]
+            new_pts.append(_find_poi(pts[i1], pts[i2], d, axis))
+    if new_pts:
+        return np.stack(new_pts)
+    else:
+        return np.empty((0, 2), dtype=pts.dtype)
 
 
 def _poly_area(pts):
