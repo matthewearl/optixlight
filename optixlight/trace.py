@@ -302,7 +302,7 @@ def trace(tris: np.ndarray,
     num_threads = 10_000
     output = _launch(pipeline, sbt, gas_handle,
                      num_threads,
-                     1_000_000 // num_threads,
+                     1_000_000_000 // num_threads,
                      source_entries,
                      source_cdf,
                      reflectivity_ims,

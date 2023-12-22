@@ -85,7 +85,7 @@ extern "C" __global__ void __raygen__rg()
     {
         sample_source(rng_state, ray_origin, color, face_idx);
 
-        for (int j = 0; j < 2; j++)
+        for (int j = 0; j < 4; j++)
         {
             face = &params.faces[face_idx];
             cosine_sample_hemisphere(curand_uniform(&rng_state),
