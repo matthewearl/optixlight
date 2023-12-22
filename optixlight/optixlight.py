@@ -128,6 +128,9 @@ def _create_new_lms(faces: list[q2bsp.Face], output: np.ndarray) \
         # the face should be boosted in brightness.
         new_lm = new_lm / np.maximum(_luxel_area(face)[:, :, None], 1e-5)
 
+        # Add in the direct light from the original lightmap.
+        new_lm += face.extract_lightmap(0)
+
         new_lms[face] = new_lm
 
     # Adjust levels to be sensible, and set the array to the correct format.
