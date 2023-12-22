@@ -84,11 +84,6 @@ def _invert_tex_vecs(world_to_tcs, faces):
 def light_bsp(bsp: q2bsp.Q2Bsp, game_dir: pathlib.Path,
               faces: list[q2bsp.Face]) -> tuple[np.ndarray, np.ndarray]:
     tris = _parse_tris(faces)
-    light_origin = np.array(
-        next(iter(e['origin']
-                  for e in bsp.entities
-                  if e['classname'] == 'light'))
-    )
 
     logger.info('calculate tc matrices')
     world_to_tcs, face_idxs = _calculate_tex_vecs(faces)
@@ -105,7 +100,7 @@ def light_bsp(bsp: q2bsp.Q2Bsp, game_dir: pathlib.Path,
     normals = np.stack([face.plane.normal for face in faces])
     lm_shapes = np.stack([face.lightmap_shape for face in faces], axis=0)
     lm_offsets = np.array([face.lightmap_offset for face in faces])
-    output = trace.trace(tris, light_origin, source_entries, source_cdf,
+    output = trace.trace(tris, source_entries, source_cdf,
                          face_idxs, normals, world_to_tcs, tc_to_worlds,
                          lm_shapes, lm_offsets)
 

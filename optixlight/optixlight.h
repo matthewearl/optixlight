@@ -32,7 +32,6 @@ struct Params
     unsigned int num_source_entries;
     unsigned int seed;
     unsigned int rays_per_thread;
-    float3 light_origin;
 };
 
 struct HitData

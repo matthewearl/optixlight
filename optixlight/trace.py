@@ -173,7 +173,6 @@ def _launch(pipeline: ox.Pipeline, sbt: ox.ShaderBindingTable,
             gas: ox.AccelerationStructure,
             num_threads: int,
             rays_per_thread: int,
-            light_origin: np.ndarray,
             source_entries: np.ndarray,
             source_cdf: np.ndarray,
             normals: np.ndarray,
@@ -226,9 +225,6 @@ def _launch(pipeline: ox.Pipeline, sbt: ox.ShaderBindingTable,
         ('u4', 'num_source_entries'),
         ('u4', 'seed'),
         ('u4', 'rays_per_thread'),
-        ('f4', 'lx'),
-        ('f4', 'ly'),
-        ('f4', 'lz'),
     ]
     params = ox.LaunchParamsRecord(names=[p[1] for p in params_tmp],
                                    formats=[p[0] for p in params_tmp])
@@ -240,9 +236,6 @@ def _launch(pipeline: ox.Pipeline, sbt: ox.ShaderBindingTable,
     params['num_source_entries'] = len(source_entries)
     params['seed'] = 0
     params['rays_per_thread'] = rays_per_thread
-    params['lx'] = light_origin[0]
-    params['ly'] = light_origin[1]
-    params['lz'] = light_origin[2]
 
     stream = cp.cuda.Stream()
     pipeline.launch(sbt, dimensions=(num_threads, 1, 1), params=params,
@@ -253,7 +246,6 @@ def _launch(pipeline: ox.Pipeline, sbt: ox.ShaderBindingTable,
 
 
 def trace(tris: np.ndarray,
-          light_origin: np.ndarray,
           source_entries: np.ndarray,
           source_cdf: np.ndarray,
           face_idxs: np.ndarray,
@@ -265,7 +257,6 @@ def trace(tris: np.ndarray,
     """
     Arguments:
         tris: (n, 3, 3) float array of triangle vertices.
-        light_origin: (3,) float array with the light origin.
         source_entries: (n_sources,) light source records.
         source_cdf: (n_sources,) uint32 array light source cumulative
             distribution function, scaled by (1<<32).
@@ -297,7 +288,6 @@ def trace(tris: np.ndarray,
     output = _launch(pipeline, sbt, gas_handle,
                      num_threads,
                      1_000_000 // num_threads,
-                     light_origin,
                      source_entries,
                      source_cdf,
                      normals, world_to_tcs, tc_to_worlds,
