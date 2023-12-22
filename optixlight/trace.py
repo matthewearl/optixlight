@@ -181,9 +181,6 @@ def _launch(pipeline: ox.Pipeline, sbt: ox.ShaderBindingTable,
             tc_to_worlds: np.ndarray,
             lm_shapes: np.ndarray,
             lm_offsets: np.ndarray) -> np.ndarray:
-    h_counts = np.zeros(len(lm_shapes) + 1, dtype='u4')
-    d_counts = cp.array(h_counts)
-
     output_shape = max(3 * shape[0] * shape[1] + offset
                        for shape, offset
                        in zip(lm_shapes, lm_offsets, strict=True))
@@ -222,7 +219,6 @@ def _launch(pipeline: ox.Pipeline, sbt: ox.ShaderBindingTable,
 
     params_tmp = [
         ('u8', 'trav_handle'),
-        ('u8', 'counts'),
         ('u8', 'output'),
         ('u8', 'faces'),
         ('u8', 'source_entries'),
@@ -237,7 +233,6 @@ def _launch(pipeline: ox.Pipeline, sbt: ox.ShaderBindingTable,
     params = ox.LaunchParamsRecord(names=[p[1] for p in params_tmp],
                                    formats=[p[0] for p in params_tmp])
     params['trav_handle'] = gas.handle
-    params['counts'] = d_counts.data.ptr
     params['output'] = d_output.data.ptr
     params['faces'] = d_face_info.ptr
     params['source_entries'] = d_source_entries.ptr
@@ -254,7 +249,7 @@ def _launch(pipeline: ox.Pipeline, sbt: ox.ShaderBindingTable,
                     stream=stream)
     stream.synchronize()
 
-    return cp.asnumpy(d_counts), cp.asnumpy(d_output) / num_threads
+    return cp.asnumpy(d_output) / num_threads
 
 
 def trace(tris: np.ndarray,
@@ -299,13 +294,13 @@ def trace(tris: np.ndarray,
     sbt = _create_sbt(prog_groups, len(world_to_tcs))
 
     num_threads = 10_000
-    counts, output = _launch(pipeline, sbt, gas_handle,
-                             num_threads,
-                             1_000_000 // num_threads,
-                             light_origin,
-                             source_entries,
-                             source_cdf,
-                             normals, world_to_tcs, tc_to_worlds,
-                             lm_shapes, lm_offsets)
+    output = _launch(pipeline, sbt, gas_handle,
+                     num_threads,
+                     1_000_000 // num_threads,
+                     light_origin,
+                     source_entries,
+                     source_cdf,
+                     normals, world_to_tcs, tc_to_worlds,
+                     lm_shapes, lm_offsets)
 
-    return output, counts
+    return output

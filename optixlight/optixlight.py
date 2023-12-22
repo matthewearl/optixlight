@@ -105,11 +105,11 @@ def light_bsp(bsp: q2bsp.Q2Bsp, game_dir: pathlib.Path,
     normals = np.stack([face.plane.normal for face in faces])
     lm_shapes = np.stack([face.lightmap_shape for face in faces], axis=0)
     lm_offsets = np.array([face.lightmap_offset for face in faces])
-    output, counts = trace.trace(tris, light_origin, source_entries, source_cdf,
-                                 face_idxs, normals, world_to_tcs, tc_to_worlds,
-                                 lm_shapes, lm_offsets)
+    output = trace.trace(tris, light_origin, source_entries, source_cdf,
+                         face_idxs, normals, world_to_tcs, tc_to_worlds,
+                         lm_shapes, lm_offsets)
 
-    return output, counts
+    return output
 
 
 @functools.lru_cache(None)
@@ -224,8 +224,7 @@ def main():
     faces = [face for face in bsp.faces if face.has_lightmap(0)]
 
     logger.info('tracing')
-    output, counts = light_bsp(bsp, game_dir, faces)
-    print(repr(counts))
+    output = light_bsp(bsp, game_dir, faces)
 
     if bsp_out_fname is not None:
         logger.info(f'writing bsp {bsp_out_fname}')

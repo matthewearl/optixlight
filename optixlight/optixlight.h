@@ -25,7 +25,6 @@ struct Face
 struct Params
 {
     OptixTraversableHandle handle;
-    unsigned int *counts;
     float *output;
     Face *faces;
     SourceEntry *source_entries;
