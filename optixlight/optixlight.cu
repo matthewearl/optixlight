@@ -1,3 +1,4 @@
+#include <curand_kernel.h>
 #include <optix.h>
 #include "optixlight.h"
 #include <cuda/random.h>
@@ -23,7 +24,7 @@ static __forceinline__ __device__ void cosine_sample_hemisphere(const float u1, 
 
 
 static __forceinline__ __device__ void sample_source(
-    unsigned int &seed,
+    curandState &rng_state,
     float3 &ray_origin,
     float3 &ray_direction,
     float3 &color)
@@ -35,7 +36,7 @@ static __forceinline__ __device__ void sample_source(
 
     // Binary search for a random source luxel.
     {
-        unsigned int v = ((lcg(seed) & 0xffffff) << 8) | (lcg(seed) & 0xff);
+        unsigned int v = curand(&rng_state);
         int lo, hi, mid;
         lo = -1;
         hi = params.num_source_entries - 1;
@@ -51,8 +52,8 @@ static __forceinline__ __device__ void sample_source(
     }
 
     face = &params.faces[se->face_idx];
-    s = se->tc.x + rnd(seed);
-    t = se->tc.y + rnd(seed);
+    s = se->tc.x + curand_uniform(&rng_state);
+    t = se->tc.y + curand_uniform(&rng_state);
 
     float3 tc = make_float3(s, t, 1);
     float3 ray_dir_local;
@@ -61,7 +62,8 @@ static __forceinline__ __device__ void sample_source(
     ray_origin.y = dot(tc, face->tc_to_world_1);
     ray_origin.z = dot(tc, face->tc_to_world_2);
 
-    cosine_sample_hemisphere(rnd(seed), rnd(seed), ray_dir_local);
+    cosine_sample_hemisphere(curand_uniform(&rng_state),
+                             curand_uniform(&rng_state), ray_dir_local);
     ray_direction = ray_dir_local.x * face->tangent1;
     ray_direction += ray_dir_local.y * face->tangent2;
     ray_direction += ray_dir_local.z * face->normal;
@@ -75,13 +77,15 @@ static __forceinline__ __device__ void sample_source(
 extern "C" __global__ void __raygen__rg()
 {
     const uint3 idx = optixGetLaunchIndex();
-    unsigned int seed = tea<4>(idx.x, params.seed);
     float3 ray_origin, ray_direction, color;
     unsigned int texel_idx;
+    curandState rng_state;
+
+    curand_init(0, idx.x, 0, &rng_state);
 
     for (int i = 0; i < params.rays_per_thread; i++)
     {
-        sample_source(seed, ray_origin, ray_direction, color);
+        sample_source(rng_state, ray_origin, ray_direction, color);
 
         optixTrace(
                 params.handle,

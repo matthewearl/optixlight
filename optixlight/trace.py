@@ -1,6 +1,7 @@
 import ctypes
 import logging
-import os
+import pathlib
+import subprocess
 
 import cupy as cp
 import numpy as np
@@ -66,24 +67,45 @@ def _create_pipeline_options() -> ox.PipelineCompileOptions:
     )
 
 
+def _source_to_ptx():
+    src_dir = pathlib.Path(__file__).parent
+    try:
+        result = subprocess.run(
+            [
+                'nvcc',
+                '-ptx', '--use_fast_math', '-lineinfo', '-std=c++11',
+                '-I/home/matt/NVIDIA-OptiX-SDK-7.6.0-linux64-x86_64/SDK',
+                '-I/home/matt/NVIDIA-OptiX-SDK-7.6.0-linux64-x86_64/include',
+                'optixlight.cu'
+            ],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            cwd=src_dir
+        )
+        for line in result.stdout.strip().split('\n'):
+            logger.error(f'nvcc stdout: {line}')
+    except subprocess.CalledProcessError as e:
+        for line in e.stderr.strip().split('\n'):
+            logger.error(f'nvcc stderr: {line}')
+        raise Exception('Failed to compile')
+
+    with (src_dir / 'optixlight.ptx').open('rb') as f:
+        ptx_data = f.read()
+
+    return ptx_data
+
+
 def _create_module(ctx: ox.DeviceContext,
-                   pipeline_options: ox.PipelineCompileOptions,
-                   cuda_src_path: str) -> ox.Module:
-    compile_opts = ox.ModuleCompileOptions(
-        debug_level=ox.CompileDebugLevel.FULL,
-        opt_level=ox.CompileOptimizationLevel.LEVEL_0
-    )
+                   pipeline_options: ox.PipelineCompileOptions) -> ox.Module:
+
+    # For some reason compiling with `ox.Module` while importing curand_kernel.h
+    # doesn't work for me.  Instead let's invoke `nvcc` ourselves and pass the
+    # output ptx file to `ox.Module`.
+    ptx_data = _source_to_ptx()
     return ox.Module(
-        ctx, cuda_src_path, compile_opts, pipeline_options,
-        compile_flags=[
-            '-G',
-            '-use_fast_math',
-            '-lineinfo',
-            '-default-device',
-            '-std=c++11',
-            #'-rdc', 'true',
-            '-I/home/matt/NVIDIA-OptiX-SDK-7.6.0-linux64-x86_64/SDK',
-        ]
+        ctx, ptx_data, pipeline_compile_options=pipeline_options,
     )
 
 
@@ -268,12 +290,10 @@ def trace(tris: np.ndarray,
         The output image.
     """
 
-    cuda_src_path = os.path.join(os.path.dirname(__file__), 'optixlight.cu')
-
     ctx = _create_ctx()
     gas_handle = _create_accel(ctx, tris, len(world_to_tcs), face_idxs)
     pipeline_options = _create_pipeline_options()
-    module = _create_module(ctx, pipeline_options, cuda_src_path)
+    module = _create_module(ctx, pipeline_options)
     prog_groups = _create_program_groups(ctx, module)
     pipeline = _create_pipeline(ctx, prog_groups, pipeline_options)
     sbt = _create_sbt(prog_groups, len(world_to_tcs))
