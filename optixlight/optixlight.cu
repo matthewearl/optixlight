@@ -26,8 +26,9 @@ static __forceinline__ __device__ void cosine_sample_hemisphere(const float u1, 
 static __forceinline__ __device__ void sample_source(
     curandState &rng_state,
     float3 &ray_origin,
-    float3 &ray_direction,
-    float3 &color)
+    float3 &color,
+    unsigned int &face_idx)
+
 {
     Face *face;
     SourceEntry *se = NULL;
@@ -51,22 +52,16 @@ static __forceinline__ __device__ void sample_source(
         se = &params.source_entries[lo + 1];
     }
 
-    face = &params.faces[se->face_idx];
+    face_idx = se->face_idx;
+    face = &params.faces[face_idx];
     s = se->tc.x + curand_uniform(&rng_state);
     t = se->tc.y + curand_uniform(&rng_state);
 
     float3 tc = make_float3(s, t, 1);
-    float3 ray_dir_local;
 
     ray_origin.x = dot(tc, face->tc_to_world_0);
     ray_origin.y = dot(tc, face->tc_to_world_1);
     ray_origin.z = dot(tc, face->tc_to_world_2);
-
-    cosine_sample_hemisphere(curand_uniform(&rng_state),
-                             curand_uniform(&rng_state), ray_dir_local);
-    ray_direction = ray_dir_local.x * face->tangent1;
-    ray_direction += ray_dir_local.y * face->tangent2;
-    ray_direction += ray_dir_local.z * face->normal;
 
     scale = 1.0f / (se->p * params.rays_per_thread);
     color.x = scale * (float)se->color.x;
@@ -76,36 +71,61 @@ static __forceinline__ __device__ void sample_source(
 
 extern "C" __global__ void __raygen__rg()
 {
+    Face* face;
     const uint3 idx = optixGetLaunchIndex();
-    float3 ray_origin, ray_direction, color;
+    float3 ray_origin, ray_dir_local, ray_direction, color;
+    uint3 poi_int;
     unsigned int texel_idx;
+    unsigned int face_idx;
     curandState rng_state;
 
     curand_init(0, idx.x, 0, &rng_state);
 
     for (int i = 0; i < params.rays_per_thread; i++)
     {
-        sample_source(rng_state, ray_origin, ray_direction, color);
+        sample_source(rng_state, ray_origin, color, face_idx);
 
-        optixTrace(
-                params.handle,
-                ray_origin,
-                ray_direction,
-                0.0f,                // Min intersection distance
-                1e16f,               // Max intersection distance
-                0.0f,                // rayTime -- used for motion blur
-                OptixVisibilityMask(255), // Specify always visible
-                OPTIX_RAY_FLAG_CULL_FRONT_FACING_TRIANGLES,
-                0,                   // SBT offset   -- See SBT discussion
-                1,                   // SBT stride   -- See SBT discussion
-                0,                   // missSBTIndex -- See SBT discussion
-                texel_idx);
-
-        if (texel_idx != 0xffffffff)
+        for (int j = 0; j < 2; j++)
         {
+            face = &params.faces[face_idx];
+            cosine_sample_hemisphere(curand_uniform(&rng_state),
+                                     curand_uniform(&rng_state), ray_dir_local);
+            ray_direction = ray_dir_local.x * face->tangent1;
+            ray_direction += ray_dir_local.y * face->tangent2;
+            ray_direction += ray_dir_local.z * face->normal;
+
+            optixTrace(
+                    params.handle,
+                    ray_origin,
+                    ray_direction,
+                    0.0f,                // Min intersection distance
+                    1e16f,               // Max intersection distance
+                    0.0f,                // rayTime -- used for motion blur
+                    OptixVisibilityMask(255), // Specify always visible
+                    OPTIX_RAY_FLAG_CULL_FRONT_FACING_TRIANGLES,
+                    0,                   // SBT offset   -- See SBT discussion
+                    1,                   // SBT stride   -- See SBT discussion
+                    0,                   // missSBTIndex -- See SBT discussion
+                    texel_idx,
+                    face_idx,
+                    poi_int.x,
+                    poi_int.y,
+                    poi_int.z);
+
+            if (texel_idx == 0xffffffff)
+                break;
+
             atomicAdd(&params.output[texel_idx + 0], color.x);
             atomicAdd(&params.output[texel_idx + 1], color.y);
             atomicAdd(&params.output[texel_idx + 2], color.z);
+
+            color.x *= params.reflectivity[texel_idx + 0];
+            color.y *= params.reflectivity[texel_idx + 1];
+            color.z *= params.reflectivity[texel_idx + 2];
+
+            ray_origin.x = __uint_as_float(poi_int.x);
+            ray_origin.y = __uint_as_float(poi_int.y);
+            ray_origin.z = __uint_as_float(poi_int.z);
         }
     }
 }
@@ -130,4 +150,9 @@ extern "C" __global__ void __closesthit__ch()
     t = max(0, min(face->lm_height - 1, t));
 
     optixSetPayload_0(face->lm_offset + 3 * (s + t * face->lm_width));
+    optixSetPayload_1(rt_data->face_idx);
+    optixSetPayload_2(__float_as_uint(poi.x));
+    optixSetPayload_3(__float_as_uint(poi.y));
+    optixSetPayload_4(__float_as_uint(poi.z));
+
 }

@@ -60,7 +60,7 @@ def _create_accel(ctx: ox.DeviceContext, tris: np.ndarray,
 def _create_pipeline_options() -> ox.PipelineCompileOptions:
     return ox.PipelineCompileOptions(
         traversable_graph_flags=ox.TraversableGraphFlags.ALLOW_SINGLE_GAS,
-        num_payload_values=1,
+        num_payload_values=5,
         num_attribute_values=3,
         exception_flags=ox.ExceptionFlags.NONE,
         pipeline_launch_params_variable_name="params"
@@ -175,6 +175,7 @@ def _launch(pipeline: ox.Pipeline, sbt: ox.ShaderBindingTable,
             rays_per_thread: int,
             source_entries: np.ndarray,
             source_cdf: np.ndarray,
+            reflectivity_ims: list[np.ndarray],
             normals: np.ndarray,
             world_to_tcs: np.ndarray,
             tc_to_worlds: np.ndarray,
@@ -216,10 +217,19 @@ def _launch(pipeline: ox.Pipeline, sbt: ox.ShaderBindingTable,
     ], dtype=dtype)
     d_face_info = optix.struct.array_to_device_memory(h_face_info)
 
+    # Setup up reflectivity map
+    h_reflectivity = np.zeros(output_shape, dtype='f4')
+    for offs, shape, reflectivity_im in zip(
+            lm_offsets, lm_shapes, reflectivity_ims, strict=True):
+        assert reflectivity_im.shape == tuple(shape) + (3,)
+        h_reflectivity[offs:offs + shape[0] * shape[1] * 3] = reflectivity_im.ravel()
+    d_reflectivity = cp.array(h_reflectivity)
+
     params_tmp = [
         ('u8', 'trav_handle'),
         ('u8', 'output'),
         ('u8', 'faces'),
+        ('u8', 'reflectivity'),
         ('u8', 'source_entries'),
         ('u8', 'source_cdf'),
         ('u4', 'num_source_entries'),
@@ -231,6 +241,7 @@ def _launch(pipeline: ox.Pipeline, sbt: ox.ShaderBindingTable,
     params['trav_handle'] = gas.handle
     params['output'] = d_output.data.ptr
     params['faces'] = d_face_info.ptr
+    params['reflectivity'] = d_reflectivity.data.ptr
     params['source_entries'] = d_source_entries.ptr
     params['source_cdf'] = d_source_cdf.data.ptr
     params['num_source_entries'] = len(source_entries)
@@ -248,6 +259,7 @@ def _launch(pipeline: ox.Pipeline, sbt: ox.ShaderBindingTable,
 def trace(tris: np.ndarray,
           source_entries: np.ndarray,
           source_cdf: np.ndarray,
+          reflectivity_ims: list[np.ndarray],
           face_idxs: np.ndarray,
           normals: np.ndarray,
           world_to_tcs: np.ndarray,
@@ -260,6 +272,9 @@ def trace(tris: np.ndarray,
         source_entries: (n_sources,) light source records.
         source_cdf: (n_sources,) uint32 array light source cumulative
             distribution function, scaled by (1<<32).
+        reflectivity_ims: Images for each face, each the same shape as the
+            corresponding lightmap, representing reflectivity of the
+            corresponding points (eg. texture colour).
         face_idxs: (n,) int array of face indices, one per tri.
         normals: (m, 3) float array of face normals.
         world_to_tcs: (m, 2, 4) float array of texture coordinate maps.
@@ -290,6 +305,7 @@ def trace(tris: np.ndarray,
                      1_000_000 // num_threads,
                      source_entries,
                      source_cdf,
+                     reflectivity_ims,
                      normals, world_to_tcs, tc_to_worlds,
                      lm_shapes, lm_offsets)
 

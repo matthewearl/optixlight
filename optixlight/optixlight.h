@@ -27,6 +27,7 @@ struct Params
     OptixTraversableHandle handle;
     float *output;
     Face *faces;
+    float *reflectivity;
     SourceEntry *source_entries;
     unsigned int *source_cdf;
     unsigned int num_source_entries;

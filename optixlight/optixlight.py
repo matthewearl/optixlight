@@ -90,8 +90,11 @@ def light_bsp(bsp: q2bsp.Q2Bsp, game_dir: pathlib.Path,
     assert len(world_to_tcs) == np.max(face_idxs) + 1
     tc_to_worlds = _invert_tex_vecs(world_to_tcs, faces)
 
+    logger.info('making reflectivity images')
+    reflectivity_ims = _make_reflectivity_ims(game_dir, faces)
+
     logger.info('making source images')
-    source_ims = _make_source_ims(game_dir, faces)
+    source_ims = _make_source_ims(reflectivity_ims, faces)
 
     logger.info('making source cdf')
     source_entries, source_cdf, _ = discrete.build_source_cdf(faces, source_ims)
@@ -100,7 +103,7 @@ def light_bsp(bsp: q2bsp.Q2Bsp, game_dir: pathlib.Path,
     normals = np.stack([face.plane.normal for face in faces])
     lm_shapes = np.stack([face.lightmap_shape for face in faces], axis=0)
     lm_offsets = np.array([face.lightmap_offset for face in faces])
-    output = trace.trace(tris, source_entries, source_cdf,
+    output = trace.trace(tris, source_entries, source_cdf, reflectivity_ims,
                          face_idxs, normals, world_to_tcs, tc_to_worlds,
                          lm_shapes, lm_offsets)
 
@@ -144,7 +147,7 @@ def _read_pcx_palette(file):
     return palette
 
 
-def _make_source_ims(game_dir: pathlib.Path, faces: list[q2bsp.Face]) \
+def _make_reflectivity_ims(game_dir: pathlib.Path, faces: list[q2bsp.Face]) \
         -> dict[q2bsp.Face, np.ndarray]:
     # Load the palette.
     with (game_dir / 'pics' / 'colormap.pcx').open('rb') as f:
@@ -160,19 +163,9 @@ def _make_source_ims(game_dir: pathlib.Path, faces: list[q2bsp.Face]) \
             with (game_dir / 'textures' / f'{tex_name}.wal').open('rb') as f:
                 textures[tex_name] = wal.read_wal(f).images[0]
 
-    # Initialize source ims as the lightmap.
-    logger.info('extracting lightmaps as initial source')
-    source_ims: dict[q2bsp.Face, np.ndarray] = {}
-    for face in faces:
-        source_ims[face] = face.extract_lightmap(0) / 255.
-
-    # Make luxels that do not appear on the face black.
-    logger.info('scaling sources by face intersection')
-    for face in faces:
-        source_ims[face] *= _luxel_area(face)[:, :, None]
-
     # Scale by texture color.
-    logger.info('scaling sources by texture color')
+    logger.info('scaling reflectivity by texture color')
+    reflectivity_ims: list[np.ndarray] = []
     for face in faces:
         # Create an image where each pixel corresponds with the reflectivity of
         # the corresponding luxel.
@@ -194,8 +187,30 @@ def _make_source_ims(game_dir: pathlib.Path, faces: list[q2bsp.Face]) \
         )
 
         # Scale the source map by this reflectivity.
-        source_ims[face] *= tex_im_remapped
+        reflectivity_ims.append(tex_im_remapped)
 
+    return reflectivity_ims
+
+
+def _make_source_ims(reflectivity_ims: dict[q2bsp.Face, np.ndarray],
+                     faces: list[q2bsp.Face]) -> dict[q2bsp.Face, np.ndarray]:
+    # Initialize source ims as the lightmap.
+    logger.info('extracting lightmaps as initial source')
+    source_ims: dict[q2bsp.Face, np.ndarray] = {}
+    for face in faces:
+        source_ims[face] = face.extract_lightmap(0) / 255.
+
+    # Make luxels that do not appear on the face black.
+    logger.info('scaling sources by face intersection')
+    for face in faces:
+        source_ims[face] *= _luxel_area(face)[:, :, None]
+
+    # Scale by texture color.
+    logger.info('scaling sources by reflectivity')
+    for reflectivity_im, face in zip(reflectivity_ims, faces, strict=True):
+        source_ims[face] *= reflectivity_im
+
+    # Make uint8.
     for face in faces:
         source_ims[face] = (source_ims[face] * 255.).astype(np.uint8)
 
