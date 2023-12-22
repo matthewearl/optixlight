@@ -2,6 +2,7 @@ import ctypes
 import logging
 import pathlib
 import subprocess
+import time
 
 import cupy as cp
 import numpy as np
@@ -249,9 +250,17 @@ def _launch(pipeline: ox.Pipeline, sbt: ox.ShaderBindingTable,
     params['rays_per_thread'] = rays_per_thread
 
     stream = cp.cuda.Stream()
+    start_time = time.perf_counter()
     pipeline.launch(sbt, dimensions=(num_threads, 1, 1), params=params,
                     stream=stream)
     stream.synchronize()
+    duration = time.perf_counter() - start_time
+    logger.info('took %.2f seconds for %s threads to run %s total rays '
+                '(%.3f million rays per second)',
+                duration,
+                num_threads,
+                num_threads * rays_per_thread,
+                1e-6 * num_threads * rays_per_thread / duration);
 
     return cp.asnumpy(d_output) / num_threads
 
