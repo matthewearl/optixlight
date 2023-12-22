@@ -23,19 +23,25 @@ def _poly_truncate(pts, d, axis, side):
         keep = ~keep
 
     new_pts = []
-    for pt1, pt2, keep1, keep2 in zip(pts, np.roll(pts, -1, axis=0),
-                                      keep, np.roll(keep, -1),
-                                      strict=True):
+    n = 0
+    new_pts = np.empty((len(pts) + 1, 2), dtype=pts.dtype)
+    for i1 in range(len(pts)):
+        i2 = (i1 + 1) % len(pts)
+        keep1 = keep[i1]
+        keep2 = keep[i2]
+
         if keep1:
-            new_pts.append(pt1)
+            pt1 = pts[i1]
+            new_pts[n] = pt1
+            n += 1
             if not keep2:
-                new_pts.append(_find_poi(pt1, pt2, d, axis))
+                pt2 = pts[i2]
+                new_pts[n] = _find_poi(pt1, pt2, d, axis)
+                n += 1
         elif keep2:
-            new_pts.append(_find_poi(pt1, pt2, d, axis))
-    if new_pts:
-        return np.stack(new_pts)
-    else:
-        return np.empty((0, 2), dtype=pts.dtype)
+            new_pts[n] = _find_poi(pts[i1], pts[i2], d, axis)
+            n += 1
+    return new_pts[:n]
 
 
 def _poly_area(pts):
@@ -44,7 +50,7 @@ def _poly_area(pts):
     return 0.5 * np.abs(np.sum(np.cross(ds[:-1], ds[1:])))
 
 
-def _render_aa_poly_rec(pts, mins, maxs):
+def _render_aa_poly_rec(clip_mask, pts, mins, maxs):
     """Rasterize a poly in some bbox.
 
     The poly is assumed to be clipped to the bbox."""
@@ -53,14 +59,18 @@ def _render_aa_poly_rec(pts, mins, maxs):
         # The poly does not intersect this subtree's rectangle at all.
         return np.zeros(np.flip(maxs - mins))
 
-    area = _poly_area(pts)
-    if np.allclose(np.product(maxs - mins), area):
-        # The poly entirely encloses this subtree's rectangle.
-        return np.ones(np.flip(maxs - mins))
+    area = None
+    if clip_mask == 0xf:
+        area = _poly_area(pts)
+        if area > (maxs[0] - mins[0]) * (maxs[1] - mins[1]) * 0.999:
+            # The poly entirely encloses this subtree's rectangle.
+            return np.ones(np.flip(maxs - mins))
 
     if mins[0] == maxs[0] - 1 and mins[1] == maxs[1] - 1:
         # Only one pixel in this subtree, so its colour should be the area of
         # the poly that intersects with this pixel.
+        if area is None:
+            area = _poly_area(pts)
         return np.array([[area]])
 
     # Otherwise, split along the longest axis, and recursively render each half.
@@ -74,9 +84,11 @@ def _render_aa_poly_rec(pts, mins, maxs):
     new_mins[split_axis] = d
 
     return np.concatenate([
-        _render_aa_poly_rec(_poly_truncate(pts, d, split_axis, False),
+        _render_aa_poly_rec(clip_mask | (1 << (split_axis << 1)),
+                            _poly_truncate(pts, d, split_axis, False),
                             mins, new_maxs),
-        _render_aa_poly_rec(_poly_truncate(pts, d, split_axis, True),
+        _render_aa_poly_rec(clip_mask | (1 << ((split_axis << 1) | 1)),
+                            _poly_truncate(pts, d, split_axis, True),
                             new_mins, maxs),
     ], axis=(1 - split_axis))
 
@@ -102,4 +114,4 @@ def render_aa_poly(pts: np.ndarray, shape: np.ndarray) -> np.ndarray:
         pts = _poly_truncate(pts, mins[axis], axis, True)
         pts = _poly_truncate(pts, maxs[axis], axis, False)
 
-    return _render_aa_poly_rec(pts, mins, maxs)
+    return _render_aa_poly_rec(0, pts, mins, maxs)
