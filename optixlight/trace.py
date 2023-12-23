@@ -162,7 +162,7 @@ def _create_sbt(prog_groups: list[ox.ProgramGroup],
 def _find_tangents(normal):
     """Find two vectors orthogonal to the given vector"""
     temp = np.zeros(3)
-    temp[np.argmin(normal)] = 1.0
+    temp[np.argmin(np.abs(normal))] = 1.0
     tangent1 = np.cross(normal, temp)
     tangent1 /= np.linalg.norm(tangent1)
     tangent2 = np.cross(normal, tangent1)

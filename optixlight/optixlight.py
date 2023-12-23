@@ -52,6 +52,15 @@ def _calculate_tex_vecs(faces: list[q2bsp.Face]) \
     return np.stack(world_to_tcs, axis=0), face_idxs
 
 
+def _find_true_normal(face):
+    # Find vector that points out from the front of a face.
+    pts = np.array(list(face.vertices))
+    diffs = pts[1:] - pts[0]
+    normal = np.sum(np.cross(diffs[1:], diffs[:-1]), axis=0)
+    normal /= np.linalg.norm(normal)
+    return normal
+
+
 def _invert_tex_vecs(world_to_tcs, faces):
     """For each face, return a 3x3 map from TCs to world coords.
 
@@ -104,6 +113,10 @@ def light_bsp(bsp: q2bsp.Q2Bsp, game_dir: pathlib.Path,
 
     logger.info('tracing')
     normals = np.stack([face.plane.normal for face in faces])
+    true_normals = np.stack([_find_true_normal(face) for face in faces])
+    flip_mask = np.einsum('ni,ni->n', normals, true_normals) < 0
+    normals[flip_mask] *= -1
+
     lm_shapes = np.stack([face.lightmap_shape for face in faces], axis=0)
     lm_offsets = np.array([face.lightmap_offset for face in faces])
     output = trace.trace(tris, source_entries, source_cdf, reflectivity_ims,
