@@ -27,7 +27,7 @@ def _build_face_groups(faces: list[q2bsp.Face]) -> list[list[q2bsp.Face]]:
         if (face1 is not None
                 and face2 is not None
                 and face1.plane_id == face2.plane_id
-                and face.plane_back == face2.plane_back):
+                and face1.plane_back == face2.plane_back):
             graph_edges[face1].append(face2)
             graph_edges[face2].append(face1)
 
@@ -78,7 +78,7 @@ def _interpolate_face_group(
     points_list = []
     values_list = []
     for face in face_group:
-        mask = areas[face] > 0.2
+        mask = areas[face] > 0.2  # If a luxel is too small it'll be noisy
         points_list.append(
             _augment(coms[face][mask])
             @ tc_to_worlds[face].T
