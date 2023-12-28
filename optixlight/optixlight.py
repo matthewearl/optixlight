@@ -128,7 +128,8 @@ def light_bsp(bsp: q2bsp.Q2Bsp, game_dir: pathlib.Path,
 
 @functools.lru_cache(None)
 def _luxel_area(face: q2bsp.Face) -> np.ndarray:
-    return raster.render_aa_poly(face.lightmap_tcs, face.lightmap_shape)
+    area, com = raster.render_aa_poly(face.lightmap_tcs, face.lightmap_shape)
+    return area
 
 
 def _create_new_lms(faces: list[q2bsp.Face], output: np.ndarray) \
