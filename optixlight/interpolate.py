@@ -82,7 +82,7 @@ def _interpolate_face_group(
         points_list.append(
             _augment(coms[face][mask])
             @ tc_to_worlds[face].T
-            @ world_to_tcs[face_group[0], :, :3].T
+            @ world_to_tcs[face_group[0]][:, :3].T
         )
         values_list.append(lms[face][mask])
     points = np.concatenate(points_list)
@@ -95,11 +95,17 @@ def _interpolate_face_group(
     for face in face_group:
         shape = face.lightmap_shape
         xi_list.append(
-            _augment((np.indices(shape) + 0.5).transpose().reshape(-1, 2))
+            _augment(
+                np.stack(np.meshgrid(np.arange(shape[1]) + 0.5,
+                                     np.arange(shape[0]) + 0.5,
+                                     indexing='xy'),
+                         axis=-1).reshape(-1, 2)
+            )
             @ tc_to_worlds[face].T
-            @ world_to_tcs[face_group[0], :, :3].T
+            @ world_to_tcs[face_group[0]][:, :3].T
         )
         idxs_list.append(n + np.arange(np.prod(shape)).reshape(shape))
+        assert np.prod(shape) == len(xi_list[-1])
         n += len(xi_list[-1])
     xi = np.concatenate(xi_list)
     assert n == len(xi)
@@ -122,6 +128,21 @@ def interpolate_lightmaps(
     areas: dict[q2bsp.Face, np.ndarray],
     coms: dict[q2bsp.Face, np.ndarray],
 ) -> dict[q2bsp.Face,  np.ndarray]:
+    """
+    Fix edges by interpolating lightmaps between adjacent faces.
+
+    Arguments:
+        faces: Faces whose lightmaps are to be interpolated.
+        lms: Lightmaps to be interpolated.
+        world_to_tcs: World to texture coord mappings for each face.
+        tc_to_worlds: Texture coord to world mappings for each face.
+        areas: Area of each luxel.
+        com: Centre-of-mass of each luxel.
+
+    Returns:
+        The interpolated lightmaps.
+    """
+
     out_lms = {}
     _build_face_groups(faces)
     for face_group in _build_face_groups(faces):

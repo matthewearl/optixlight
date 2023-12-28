@@ -52,6 +52,7 @@ class _DirEntry:
 class Face:
     bsp: 'Q2Bsp'
     plane_id: int
+    plane_back: bool
     edge_list_idx: int
     num_edges: int
     texinfo_id: int
@@ -77,6 +78,10 @@ class Face:
             else:
                 v = self.bsp.edges[edge_id][0]
             yield v
+
+    @property
+    def signed_edge_indices(self):
+        return self.bsp.edge_list[self.edge_list_idx:self.edge_list_idx + self.num_edges]
 
     @property
     def vertices(self):
@@ -243,7 +248,8 @@ class Q2Bsp:
 
         def read_face(plane_id, side, edge_list_idx, num_edges, texinfo_id, s1, s2, s3, s4,
                       lightmap_offset):
-            return Face(self, plane_id, edge_list_idx, num_edges, texinfo_id, [s1, s2, s3, s4], lightmap_offset)
+            return Face(self, plane_id, bool(side), edge_list_idx, num_edges,
+                        texinfo_id, [s1, s2, s3, s4], lightmap_offset)
         self.vertices = _read_lump(f, dir_entries[2], "<fff")
         self.faces = _read_lump(f, dir_entries[6], "<HHLHHBBBBl", read_face)
         self.edges = _read_lump(f, dir_entries[11], "<HH")
