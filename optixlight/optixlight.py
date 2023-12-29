@@ -6,6 +6,7 @@ import sys
 import numpy as np
 
 from . import discrete
+from . import interpolate
 from . import raster
 from . import trace
 from . import q2bsp
@@ -46,10 +47,7 @@ def _calculate_tex_vecs(faces: list[q2bsp.Face]) \
 
         world_to_tcs.append(M)
 
-    face_idxs = np.repeat(np.arange(len(world_to_tcs)),
-                          [(face.num_edges - 2) for face in faces])
-
-    return np.stack(world_to_tcs, axis=0), face_idxs
+    return np.stack(world_to_tcs, axis=0)
 
 
 def _find_true_normal(face):
@@ -94,19 +92,18 @@ def _invert_tex_vecs(world_to_tcs, faces):
 
 
 def light_bsp(bsp: q2bsp.Q2Bsp, game_dir: pathlib.Path,
-              faces: list[q2bsp.Face]) -> tuple[np.ndarray, np.ndarray]:
+              faces: list[q2bsp.Face],
+              areas: dict[q2bsp.Face, np.ndarray],
+              world_to_tcs: np.ndarray,
+              tc_to_worlds: np.ndarray) \
+        -> tuple[np.ndarray, np.ndarray]:
     tris = _parse_tris(faces)
-
-    logger.info('calculate tc matrices')
-    world_to_tcs, face_idxs = _calculate_tex_vecs(faces)
-    assert len(world_to_tcs) == np.max(face_idxs) + 1
-    tc_to_worlds = _invert_tex_vecs(world_to_tcs, faces)
 
     logger.info('making reflectivity images')
     reflectivity_ims = _make_reflectivity_ims(game_dir, faces)
 
     logger.info('making source images')
-    source_ims = _make_source_ims(reflectivity_ims, faces)
+    source_ims = _make_source_ims(reflectivity_ims, faces, areas)
 
     logger.info('making source cdf')
     source_entries, source_cdf, _ = discrete.build_source_cdf(faces, source_ims)
@@ -119,6 +116,9 @@ def light_bsp(bsp: q2bsp.Q2Bsp, game_dir: pathlib.Path,
 
     lm_shapes = np.stack([face.lightmap_shape for face in faces], axis=0)
     lm_offsets = np.array([face.lightmap_offset for face in faces])
+    face_idxs = np.repeat(np.arange(len(faces)),
+                          [(face.num_edges - 2) for face in faces])
+    assert len(faces) == np.max(face_idxs) + 1
     output = trace.trace(tris, source_entries, source_cdf, reflectivity_ims,
                          face_idxs, normals, world_to_tcs, tc_to_worlds,
                          lm_shapes, lm_offsets)
@@ -126,29 +126,45 @@ def light_bsp(bsp: q2bsp.Q2Bsp, game_dir: pathlib.Path,
     return output
 
 
-@functools.lru_cache(None)
 def _luxel_area(face: q2bsp.Face) -> np.ndarray:
     area, com = raster.render_aa_poly(face.lightmap_tcs, face.lightmap_shape)
     return area
 
 
-def _create_new_lms(faces: list[q2bsp.Face], output: np.ndarray) \
-        -> dict[q2bsp.Face, np.ndarray]:
+def _create_new_lms(
+        faces: list[q2bsp.Face],
+        areas: dict[q2bsp.Face, np.ndarray],
+        coms: dict[q2bsp.Face, np.ndarray],
+        world_to_tcs: np.ndarray,
+        tc_to_worlds: np.ndarray,
+        output: np.ndarray,
+    ) -> dict[q2bsp.Face, np.ndarray]:
+
     # Pull out each face's lightmap data.
     new_lms = {}
-    for face in faces:
+    for face_idx, face in enumerate(faces):
         offs = face.lightmap_offset
         h, w = face.lightmap_shape
         new_lm = output[offs:offs + w*h*3].reshape(h, w, 3)
 
         # Texels that are only partially visible due to being on the edge of
         # the face should be boosted in brightness.
-        new_lm = new_lm / np.maximum(_luxel_area(face)[:, :, None], 1e-5)
-
-        # Add in the direct light from the original lightmap.
-        new_lm += face.extract_lightmap(0)
+        new_lm = new_lm / np.maximum(areas[face][:, :, None], 1e-5)
 
         new_lms[face] = new_lm
+
+    # Interpolate to fix up edges.
+    new_lms = interpolate.interpolate_lightmaps(
+        faces,
+        new_lms,
+        dict(zip(faces, world_to_tcs)),
+        dict(zip(faces, tc_to_worlds)),
+        areas, coms
+    )
+
+    # Add in the direct light from the original lightmap.
+    for face in faces:
+        new_lms[face] += face.extract_lightmap(0)
 
     # Adjust levels to be sensible, and set the array to the correct format.
     new_lms = {face: np.clip(new_lm, 0, 255).astype(np.uint8)
@@ -213,7 +229,9 @@ def _make_reflectivity_ims(game_dir: pathlib.Path, faces: list[q2bsp.Face]) \
 
 
 def _make_source_ims(reflectivity_ims: dict[q2bsp.Face, np.ndarray],
-                     faces: list[q2bsp.Face]) -> dict[q2bsp.Face, np.ndarray]:
+                     faces: list[q2bsp.Face],
+                     areas: dict[q2bsp.Face, np.ndarray]) \
+        -> dict[q2bsp.Face, np.ndarray]:
     # Initialize source ims as the lightmap.
     logger.info('extracting lightmaps as initial source')
     source_ims: dict[q2bsp.Face, np.ndarray] = {}
@@ -223,7 +241,7 @@ def _make_source_ims(reflectivity_ims: dict[q2bsp.Face, np.ndarray],
     # Make luxels that do not appear on the face black.
     logger.info('scaling sources by face intersection')
     for face in faces:
-        source_ims[face] *= _luxel_area(face)[:, :, None]
+        source_ims[face] *= areas[face][:, :, None]
 
     # Scale by texture color.
     logger.info('scaling sources by reflectivity')
@@ -250,18 +268,30 @@ def main():
     logger.info(f'loading bsp {bsp_in_fname}')
     with open(bsp_in_fname, 'rb') as f:
         bsp = q2bsp.Q2Bsp(f)
-
     faces = [face for face in bsp.faces if face.has_lightmap(0)]
 
+    logger.info('getting luxel areas')
+    areas: dict[q2bsp.Face, np.ndarray] = {}
+    coms: dict[q2bsp.Face, np.ndarray] = {}
+    for face in faces:
+        areas[face], coms[face] = raster.render_aa_poly(face.lightmap_tcs,
+                                                        face.lightmap_shape)
+
+    logger.info('calculate tc matrices')
+    world_to_tcs = _calculate_tex_vecs(faces)
+    tc_to_worlds = _invert_tex_vecs(world_to_tcs, faces)
+
     logger.info('tracing')
-    output = light_bsp(bsp, game_dir, faces)
+    output = light_bsp(bsp, game_dir, faces, areas, world_to_tcs, tc_to_worlds)
 
     if bsp_out_fname is not None:
         logger.info(f'writing bsp {bsp_out_fname}')
-        new_lms = _create_new_lms(faces, output)
+        new_lms = _create_new_lms(faces, areas, coms, world_to_tcs,
+                                  tc_to_worlds, output)
 
         # Rewrite the lightmap lump.
-        with (open(bsp_in_fname, 'rb') as in_f, open(bsp_out_fname, 'wb') as out_f):
+        with (open(bsp_in_fname, 'rb') as in_f,
+              open(bsp_out_fname, 'wb') as out_f):
             q2bsp.rewrite_lightmap(in_f, new_lms, out_f)
 
 if __name__ == "__main__":
