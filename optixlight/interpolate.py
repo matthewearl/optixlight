@@ -1,9 +1,13 @@
 import collections
+import logging
 
 import numpy as np
 import scipy
 
 from . import q2bsp
+
+
+logger = logging.getLogger(__name__)
 
 
 def _build_face_groups(faces: list[q2bsp.Face]) -> list[list[q2bsp.Face]]:
@@ -87,6 +91,18 @@ def _interpolate_face_group(
         values_list.append(lms[face][mask])
     points = np.concatenate(points_list)
     values = np.concatenate(values_list)
+
+    if len(points) == 0:
+        # We hit this case with face groups containing only degenerate faces
+        # with zero area, but also for collections of long thin faces.  Here we
+        # just return the unmodified lightmaps, which is fine in the degenerate
+        # case but we should do something better for the long thin case.
+
+        total_area = sum(np.sum(areas[face]) for face in face_group)
+        if total_area > 0:
+            logger.warning('not interpolating face group with %.5f area and %s'
+                           ' faces', total_area, len(face_group))
+        return {face: lms[face] for face in face_group}
 
     # Make an array of points for which we want data.
     xi_list = []
