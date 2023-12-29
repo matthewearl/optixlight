@@ -11,56 +11,11 @@ logger = logging.getLogger(__name__)
 
 
 def _build_face_groups(faces: list[q2bsp.Face]) -> list[list[q2bsp.Face]]:
-    # Build a graph with faces as vertices, with a graph edge between each
-    # coplanar pair of faces that share a geometry edge, and are also in the
-    # same plane
-    edge_to_faces: dict[int, list[q2bsp.Face | None]] = collections.defaultdict(
-        lambda: [None, None]
-    )
+    face_groups_dict = collections.defaultdict(list)
     for face in faces:
-        for edge_id in face.signed_edge_indices:
-            if edge_id < 0:
-                edge_to_faces[-edge_id][0] = face
-            else:
-                edge_to_faces[edge_id][1] = face
+        face_groups_dict[(face.plane_id, face.plane_back)].append(face)
 
-    graph_edges: dict[q2bsp.Face, list[q2bsp.Face]] = (
-        collections.defaultdict(list)
-    )
-    for face1, face2 in edge_to_faces.values():
-        if (face1 is not None
-                and face2 is not None
-                and face1.plane_id == face2.plane_id
-                and face1.plane_back == face2.plane_back):
-            graph_edges[face1].append(face2)
-            graph_edges[face2].append(face1)
-
-    # Find connected subgraphs
-    face_to_group: dict[q2bsp.Face, int] = {}
-    def flood_fill(face: q2bsp.Face,
-                   group_num: int,
-                   face_to_group: dict[q2bsp.Face, int]):
-        """Assign a group num to this face's connected subgraph."""
-        assert face not in face_to_group
-        face_to_group[face] = group_num
-        for neighbour in graph_edges[face]:
-            if neighbour in face_to_group:
-                assert face_to_group[neighbour] == group_num
-            else:
-                flood_fill(neighbour, group_num, face_to_group)
-
-    num_groups = 0
-    for face in faces:
-        if face not in face_to_group:
-            flood_fill(face, num_groups, face_to_group)
-            num_groups += 1
-
-    # Invert the dict into a list of face groups.
-    face_groups: list[list[q2bsp.Face]] = [[] for _ in range(num_groups)]
-    for face, group_num in face_to_group.items():
-        face_groups[group_num].append(face)
-
-    return face_groups
+    return list(face_groups_dict.values())
 
 
 def _augment(a):
@@ -82,7 +37,9 @@ def _interpolate_face_group(
     points_list = []
     values_list = []
     for face in face_group:
-        mask = areas[face] > 0.2  # If a luxel is too small it'll be noisy
+        # TODO: Merge samples with a small area so that each sample has a
+        # minimum total area.  Without this small faces are likely to be noisy.
+        mask = areas[face] > 0.0
         points_list.append(
             _augment(coms[face][mask])
             @ tc_to_worlds[face].T
@@ -93,16 +50,13 @@ def _interpolate_face_group(
     values = np.concatenate(values_list)
 
     if len(points) == 0:
-        # We hit this case with face groups containing only degenerate faces
-        # with zero area, but also for collections of long thin faces.  Here we
-        # just return the unmodified lightmaps, which is fine in the degenerate
-        # case but we should do something better for the long thin case.
-
+        # Some faces contain only degenerate faces with zero area... in this
+        # case just return their lightmaps unmodified.
         total_area = sum(np.sum(areas[face]) for face in face_group)
-        if total_area > 0:
+        if total_area == 0:
             logger.warning('not interpolating face group with %.5f area and %s'
                            ' faces', total_area, len(face_group))
-        return {face: lms[face] for face in face_group}
+            return {face: lms[face] for face in face_group}
 
     # Make an array of points for which we want data.
     xi_list = []
