@@ -223,7 +223,7 @@ def _make_reflectivity_ims(game_dir: pathlib.Path, faces: list[q2bsp.Face]) \
         )
 
         # Scale the source map by this reflectivity.
-        reflectivity_ims.append(tex_im_remapped)
+        reflectivity_ims.append(tex_im_remapped ** 0.7)
 
     return reflectivity_ims
 
